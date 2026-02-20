@@ -16,12 +16,13 @@ class ProblemType(Enum):
     PERFORMANCE_ANALYSIS = "performance_analysis"
     SOLUTION_DESIGN = "solution_design"
 
-def generate_problem(tag: str, difficulty: Difficulty, problem_type: ProblemType) -> Dict[str, Any]:
+def generate_problem(tag: str, difficulty: Difficulty, problem_type: ProblemType, model: str = None) -> Dict[str, Any]:
     """
     题目生成核心函数
     :param tag: 题目标签 (如 "Array", "Dynamic Programming")
     :param difficulty: 题目难度 (Difficulty 枚举)
     :param problem_type: 题目类型 (ProblemType 枚举)
+    :param model: 模型名称 (可选)
     :return: 包含 "problem" 和 "answer" 的字典
     """
     # 初始化组件
@@ -40,7 +41,7 @@ def generate_problem(tag: str, difficulty: Difficulty, problem_type: ProblemType
     
     # 2. 调用大模型变异生成
     try:
-        result_json = mutator.mutate(seed, problem_type.value)
+        result_json = mutator.mutate(seed, problem_type.value, model_name=model)
         result = json.loads(result_json)
         
         # 3. 构造统一的返回值格式

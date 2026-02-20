@@ -15,11 +15,15 @@ from dotenv import load_dotenv
 import sys
 
 # 添加 generator_kit 所在目录到 sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 获取当前文件所在目录 (programate)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 # 添加 xiaohang_integration 到 sys.path
-xiaohang_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "xiaohang_integration")
-sys.path.append(xiaohang_path)
+xiaohang_path = os.path.join(current_dir, "xiaohang_integration")
+if xiaohang_path not in sys.path:
+    sys.path.append(xiaohang_path)
 
 try:
     from generator_kit import generate_cases
@@ -116,6 +120,16 @@ MODEL_ENDPOINTS = {
         "url": "https://console.siflow.cn/siflow/longmen/skyinfer/fjing/qwen-lcb/v1/8020/v1/chat/completions",
         "model": "model-lcb",
     },
+    "coder32b": {
+        "name": "模型二（指令 32B）",
+        "url": "https://console.siflow.cn/siflow/auriga/skyinfer/wzhang/qwen25-coder-ins/0/30000/v1/chat/completions",
+        "model": "Qwen2.5-Coder-Instruct-32B-Arena",
+    },
+    "coder480b": {
+        "name": "模型三（480B MoE 指令）",
+        "url": "https://console.siflow.cn/siflow/auriga/skyinfer/fjing/qwen3-480b-0/v1/chat/completions",
+        "model": "Qwen3-Coder-480B-A35B-Instruct",
+    },
     "coder1t": {
         "name": "模型四（1T）",
         "url": "https://console.siflow.cn/siflow/longmen/skyinfer/wzhang/litellm-dpsk/v1/4000/v1/chat/completions",
@@ -123,14 +137,21 @@ MODEL_ENDPOINTS = {
     },
     "loopcoder": {
         "name": "模型五",
-        "url": "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-loop/v1/8000/v1/chat/completions",
-        "model": "IQuest-Coder-V1-40B-Loop-Instruct",
+        "url": "https://console.siflow.cn/siflow/longmen/skyinfer/wzhang/loopcoder/v1/8020/v1/chat/completions",
+        "model": "loopcoder",
     },
 }
 
 # from call_models import stream_chat_completion
 def stream_chat_completion(url, model, messages, api_key=None, timeout=0):
     api_key = api_key if api_key is not None else os.getenv("SIFLOW_API_KEY", "EMPTY")
+    # 如果URL是小航API，使用对应的key
+    if "xhang.buaa.edu.cn" in url:
+        # 尝试从endpoints字典中查找（如果是通过MODEL_ENDPOINTS传下来的话，这里可能拿不到）
+        # 但是我们可以直接硬编码默认值作为后备
+        if api_key == "EMPTY":
+             api_key = "f93082e1-2cbf-4f81-af8f-9c98d528b6b1"
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -188,10 +209,13 @@ def hangfudao():
 def ask():
     question = request.json.get('question')
     stage = request.json.get('stage', '聊天')
-    language = request.json.get('language', 'C')  # 获取语言参数，默认为C语言
+    language = request.json.get('language', 'C')
     user_id = session.get('user_id', 'default_user')
-    history = request.json.get('history', [])  # 获取前端传来的历史记录
+    history = request.json.get('history', [])
     selected_model = request.json.get('model', 'xiaohang')
+    
+    # 获取模型配置
+    model_config = MODEL_ENDPOINTS.get(selected_model, MODEL_ENDPOINTS['coder480b'])
     
     # 获取参考答案数据
     reference_answer = request.json.get('reference_answer', '')
@@ -285,40 +309,40 @@ def ask():
                     prompt += f"\n\n历史对话：\n{history_text}"
                 prompt += f"\n\n问题：{question}"
             
-            # 供外部模型 system 消息使用
-            system_content = prompt  # 简化处理，直接用 prompt
-            if stage != "深入追问":
-                system_content = system_prompts.get(stage, system_base_prompt)
-
-            ai_response = ""
+            # 调用外部模型流式接口
+            # 注意：这里的 messages 逻辑需要整理。
+            # 如果是深入追问，我们使用 chat 格式。
+            # 如果是其他任务，我们将 prompt 作为 user message 发送。
             
-            if selected_model == "xiaohang":
-                # 创建 XiaohangLLM 实例并直接使用
-                llm = XiaohangLLM()
-                for content_piece in llm._call(prompt):
-                    ai_response += content_piece  # 只用于存储到Redis
-                    yield content_piece  # 流式输出给前端
+            api_messages = []
+            if stage == "深入追问":
+                # 聊天模式：System + History + User
+                api_messages.append({"role": "system", "content": system_base_prompt})
+                # 添加历史
+                for h in all_history[-10:]:
+                    role = h.get('role', 'user')
+                    content = h.get('content', '')
+                    api_messages.append({"role": role, "content": content})
+                # 添加当前问题
+                api_messages.append({"role": "user", "content": question})
             else:
-                # 外部模型分发（SIFLOW 兼容 OpenAI Chat Completions）
-                endpoint = MODEL_ENDPOINTS.get(selected_model)
-                if not endpoint:
-                    yield f"错误: 未知模型 '{selected_model}'"
-                else:
-                    messages = [
-                        {"role": "system", "content": "你是C语言数据结构与算法的专家。"}, # 简单 system prompt
-                        {"role": "user", "content": prompt},
-                    ]
-                    api_key = os.getenv("SIFLOW_API_KEY", "EMPTY")
-                    for piece in stream_chat_completion(
-                        url=endpoint["url"],
-                        model=endpoint["model"],
-                        messages=messages,
-                        api_key=api_key,
-                        timeout=0
-                    ):
-                        ai_response += piece
-                        yield piece
-            
+                # 任务模式：System (Prompt) + User (Question)
+                # 或者直接把 System Prompt 放在 system role，问题放在 user role
+                # 之前的代码构建了 prompt 包含所有信息
+                api_messages.append({"role": "system", "content": "You are a helpful programming assistant."})
+                api_messages.append({"role": "user", "content": prompt})
+
+            # 使用生成器 yield 数据并存储到 Redis
+            ai_response = ""
+            for chunk in stream_chat_completion(
+                url=model_config['url'],
+                model=model_config['model'],
+                messages=api_messages,
+                api_key=model_config.get('api_key')
+            ):
+                ai_response += chunk
+                yield chunk
+
             # 存储AI回复到Redis
             ai_message = {
                 "role": "assistant",
@@ -334,8 +358,9 @@ def ask():
                 app.config['SESSION_REDIS'].ltrim(chat_history_key, -50, -1)
             
         except Exception as e:
-            yield f"错误: {str(e)}"
-    
+            yield f"Error: {str(e)}"
+
+
     return Response(stream_with_context(generate_response()), mimetype='text/event-stream')
 
 @app.route('/api/generate_questions', methods=['POST'])
@@ -692,4 +717,4 @@ def get_history_records():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5011)
+    app.run(debug=True, host='0.0.0.0', port=5013)

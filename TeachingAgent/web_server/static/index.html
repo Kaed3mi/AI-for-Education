@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>编程教学 AI Agent</title>
+    <!-- Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 - Agent 选择 -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>🎓 编程教学 Agent</h1>
+                <p class="subtitle">AI 驱动的编程学习助手</p>
+            </div>
+
+            <nav class="agent-nav">
+                <div class="nav-item active" data-agent="core_teaching">
+                    <div class="agent-icon">📖</div>
+                    <div class="agent-info">
+                        <h3>知识点学习</h3>
+                        <p>循序渐进掌握核心概念</p>
+                    </div>
+                </div>
+
+                <div class="nav-item" data-agent="error_analysis">
+                    <div class="agent-icon">🐛</div>
+                    <div class="agent-info">
+                        <h3>错误代码分析</h3>
+                        <p>识别并修复代码陷阱</p>
+                    </div>
+                </div>
+            </nav>
+
+            <div class="session-controls">
+                <button id="newChatBtn" class="btn-secondary">
+                    <span>➕</span> 新对话
+                </button>
+                <button id="clearHistoryBtn" class="btn-text">
+                    <span>🗑️</span> 清空历史
+                </button>
+            </div>
+
+            <div class="session-info" id="sessionInfo">
+                <div class="info-item">
+                    <span class="label">消息数:</span>
+                    <span class="value" id="messageCount">0</span>
+                </div>
+                <div class="info-item" id="stageInfo" style="display: none;">
+                    <span class="label">阶段:</span>
+                    <span class="value" id="currentStage">-</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主聊天区域 -->
+        <main class="chat-area">
+            <!-- 聊天头部 -->
+            <header class="chat-header">
+                <div class="agent-header">
+                    <div class="agent-avatar" id="agentAvatar">📚</div>
+                    <div class="agent-details">
+                        <h2 id="agentTitle">费曼学习法导师</h2>
+                        <p id="agentDescription">帮你深入理解复杂的编程概念</p>
+                    </div>
+                </div>
+                <div class="status-indicator">
+                    <span class="status-dot online"></span>
+                    <span class="status-text">在线</span>
+                </div>
+            </header>
+
+            <!-- 消息列表 -->
+            <div class="messages-container" id="messagesContainer">
+                <div class="welcome-message" id="welcomeMessage">
+                    <div class="welcome-content">
+                        <div class="welcome-icon">👋</div>
+                        <h2>欢迎使用编程教学 AI Agent！</h2>
+                        <p>请从左侧选择一个教学助手开始学习：</p>
+                        <!-- <ul class="feature-list">
+                            <li>
+                                <strong>📚 费曼学习法</strong>
+                                <p>用最简单的语言解释复杂概念，帮助你真正理解编程原理</p>
+                            </li>
+                            <li>
+                                <strong>🎯 反向图灵测试</strong>
+                                <p>通过对话评估你的编程思维特征和能力维度</p>
+                            </li>
+                            <li>
+                                <strong>💡 苏格拉底教学法</strong>
+                                <p>通过提问引导你自己找到代码问题和解决方案</p>
+                            </li>
+                        </ul> -->
+                        <div class="tips">
+                            <p>💡 提示：输入消息开始对话，Agent 会根据你的学习进度提供个性化指导</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea
+                        id="messageInput"
+                        placeholder="输入你的问题或代码..."
+                        rows="1"
+                    ></textarea>
+                    <button id="sendBtn" class="btn-primary" disabled>
+                        <span class="btn-text">发送</span>
+                        <span class="btn-icon">↑</span>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    <span class="input-hint">按 Enter 发送，Shift + Enter 换行</span>
+                    <div class="quick-actions" id="quickActions" style="display: none;">
+                        <button class="action-btn" data-action="hint">💡 获取提示</button>
+                        <button class="action-btn" data-action="summary">📋 查看摘要</button>
+                        <button class="action-btn" data-action="progress">📊 学习进度</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 右侧信息面板 -->
+        <aside class="info-panel" id="infoPanel">
+            <div class="panel-header">
+                <h3>📊 学习信息</h3>
+                <button class="close-panel" id="closePanelBtn">×</button>
+            </div>
+
+            <div class="panel-content" id="panelContent">
+                <div class="panel-section" id="progressSection">
+                    <h4>学习进度</h4>
+                    <div id="progressContent">
+                        <p class="placeholder">开始对话后显示进度信息</p>
+                    </div>
+                </div>
+
+                <div class="panel-section" id="codeSection" style="display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h4>📝 代码分析</h4>
+                        <button id="nextQuestionBtn" class="action-btn" style="font-size: 11px; padding: 2px 8px;">
+                            ⏭️ 下一题
+                        </button>
+                    </div>
+                    <pre><code id="codeContent" class="language-c"></code></pre>
+                </div>
+
+                <div class="panel-section" id="scoresSection" style="display: none;">
+                    <h4>能力评估</h4>
+                    <div id="scoresContent"></div>
+                </div>
+
+                <div class="panel-section" id="summarySection" style="display: none;">
+                    <h4>学习摘要</h4>
+                    <div id="summaryContent"></div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- 知识点选择模态框 -->
+    <div class="modal-overlay" id="selectionModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📚 选择学习内容</h2>
+                <p>请配置您的学习计划</p>
+            </div>
+            
+            <div class="selection-section">
+                <h3>🎯 选择难度</h3>
+                <div class="difficulty-options">
+                    <label class="radio-label">
+                        <input type="radio" name="difficulty" value="easy"> 
+                        <span>🟢 初级 (Easy)</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="difficulty" value="medium" checked> 
+                        <span>🟡 中级 (Medium)</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="difficulty" value="hard"> 
+                        <span>🔴 高级 (Hard)</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="selection-section">
+                <h3>📖 选择知识点 (可多选)</h3>
+                <div class="knowledge-list" id="knowledgeList">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="selection-count">已选: <span id="selectedCount">0</span></div>
+                <button id="startLearningBtn" class="btn-primary" disabled>开始学习</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载指示器 -->
+    <div class="typing-indicator" id="typingIndicator" style="display: none;">
+        <span></span>
+        <span></span>
+        <span></span>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

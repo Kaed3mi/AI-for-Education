@@ -44,7 +44,6 @@ class TeachingDimension(Enum):
     CONCEPT_UNDERSTANDING = "概念理解"
     LOGICAL_THINKING = "逻辑思维"
     CODE_APPLICATION = "代码应用"
-    CRITICAL_THINKING = "举一反三"
 
 
 class CoreTeachingAgent:
@@ -85,8 +84,7 @@ class CoreTeachingAgent:
         self.scores = {
             TeachingDimension.CONCEPT_UNDERSTANDING.value: 0.5,
             TeachingDimension.LOGICAL_THINKING.value: 0.5,
-            TeachingDimension.CODE_APPLICATION.value: 0.5,
-            TeachingDimension.CRITICAL_THINKING.value: 0.5
+            TeachingDimension.CODE_APPLICATION.value: 0.5
         }
 
     def reset(self):
@@ -115,18 +113,15 @@ class CoreTeachingAgent:
         return self.scores.copy()
 
     def get_comprehensive_scores(self) -> Dict[str, float]:
-        """获取合并后的综合评分（用于前端显示）"""
+        """获取所有维度的评分（用于前端显示）"""
         concept_score = self.scores[TeachingDimension.CONCEPT_UNDERSTANDING.value]
         logical_score = self.scores[TeachingDimension.LOGICAL_THINKING.value]
         code_score = self.scores[TeachingDimension.CODE_APPLICATION.value]
-        critical_score = self.scores[TeachingDimension.CRITICAL_THINKING.value]
-
-        # 综合能力 = (逻辑思维 + 代码应用 + 举一反三) / 3
-        comprehensive_score = (logical_score + code_score + critical_score) / 3
 
         return {
             "概念理解": concept_score,
-            "综合能力": comprehensive_score
+            "逻辑思维": logical_score,
+            "代码应用": code_score
         }
 
     def get_progress(self) -> Dict[str, Any]:
@@ -214,21 +209,47 @@ class CoreTeachingAgent:
         if not response_text:
             return
 
-        # 1. 解析进度步骤标记 [STEP:xxx]
-        step_match = re.search(r"\[STEP:(\w+)\]", response_text)
         current_topic_id = self.selected_topics[self.current_topic_index] if self.selected_topics else None
-        
+
+        # 关键修复：先解析评分，再更新阶段
+        # 因为 [STEP:xxx] 表示"即将切换到 xxx"，回复中的评分是针对"当前"阶段的
+        # 1.5. 先解析评分标记 [SCORE:xxx]（在阶段更新之前）
+        score_match = re.search(r"\[SCORE:(\d+)\]", response_text)
+        score_stage = None  # 记录评分对应的阶段
+        if score_match:
+            # 如果有 [STEP:xxx] 标记，说明评分是针对"上一个"阶段的
+            step_match = re.search(r"\[STEP:(\w+)\]", response_text)
+            if step_match:
+                next_stage = step_match.group(1)
+                # 阶段顺序：concept -> example -> practice -> summary
+                step_order = ["concept", "example", "practice", "summary"]
+                if next_stage in step_order:
+                    next_index = step_order.index(next_stage)
+                    if next_index > 0:
+                        # 评分是针对上一个阶段的
+                        score_stage = step_order[next_index - 1]
+                    else:
+                        # 边界情况：不应该出现，但降级处理
+                        score_stage = next_stage
+            else:
+                # 没有 [STEP:xxx] 标记，使用当前阶段
+                if current_topic_id and current_topic_id in self.topic_status:
+                    score_stage = self.topic_status[current_topic_id].get("stage", "concept")
+
+        # 1. 解析进度步骤标记 [STEP:xxx]（在评分解析之后）
+        step_match = re.search(r"\[STEP:(\w+)\]", response_text)
+
         if step_match and current_topic_id:
             next_step = step_match.group(1)
-            
+
             if current_topic_id in self.topic_status:
                 # 更新大阶段状态
                 self.topic_status[current_topic_id]["stage"] = next_step
-                
+
                 # 更新子步骤里程碑状态
                 milestones = self.topic_status[current_topic_id]["milestones"]
                 step_order = ["concept", "example", "practice", "summary"]
-                
+
                 if next_step in step_order:
                     found_new = False
                     for s in step_order:
@@ -240,22 +261,22 @@ class CoreTeachingAgent:
                         else:
                             milestones[s] = "pending"
 
-        # 2. 解析评分标记 [SCORE:xxx]
-        score_match = re.search(r"\[SCORE:(\d+)\]", response_text)
-        if score_match:
+        # 2. 使用预先解析的 score_stage 来更新分数
+        if score_match and score_stage:
             score_val = int(score_match.group(1)) / 100.0
-            # 简单更新逻辑：根据当前阶段更新不同维度的分数
+            # 根据评分对应的阶段更新不同维度的分数
             if current_topic_id and current_topic_id in self.topic_status:
-                stage = self.topic_status[current_topic_id].get("stage", "concept")
-                
+                print(f"[正式评分调试] 评分对应的阶段: {score_stage}, 分数值: {score_val}, topic_id: {current_topic_id}")
+
                 target_dim = TeachingDimension.CONCEPT_UNDERSTANDING.value
-                if stage == "example" or stage == "code":
+                if score_stage == "example" or score_stage == "code":
                     target_dim = TeachingDimension.CODE_APPLICATION.value
-                elif stage == "practice":
+                elif score_stage == "practice":
                     target_dim = TeachingDimension.LOGICAL_THINKING.value
-                elif stage == "summary":
-                    target_dim = TeachingDimension.CRITICAL_THINKING.value
-                
+                elif score_stage == "summary":
+                    # target_dim removed (CRITICAL_THINKING)
+                    pass  # summary阶段不需要评分
+
                 # 平滑更新
                 old_score = self.scores[target_dim]
                 self.scores[target_dim] = old_score * 0.7 + score_val * 0.3
@@ -559,8 +580,8 @@ class CoreTeachingAgent:
         return text
 
     def _build_system_prompt(self) -> str:
-        return """你是一位精通费曼学习法和苏格拉底教学法的计算机科学导师。
-你的目标是帮助学生彻底掌握数据结构知识点。
+        return """你是一位精通费曼学习法和苏格拉底教学法的**C语言数据结构**导师。
+你的目标是帮助大一学生彻底掌握C语言中的数据结构知识点。
 
 【核心原则】
 1. **主动提问**：永远是你问学生，而不是学生问你。
@@ -572,15 +593,50 @@ class CoreTeachingAgent:
    - 学生回答正确时，不要只说"对"，要追问"为什么"、"底层原理"或"更复杂的情况"。
    - 引导学生自己发现真理。
 
+【🚨🚨🚨 严禁使用 Python 代码！必须使用 C 语言！🚨🚨🚨】
+- **绝对禁止**使用 Python 语法！
+- **绝对禁止**使用：
+  * Python 的列表：`arr = [1, 2, 3]` ❌
+  * Python 的 print：`print(arr[0])` ❌
+  * Python 的 len：`len(arr)` ❌
+  * Python 的缩进语法 ❌
+- **必须使用 C 语言语法**：
+  * 使用 `#include <stdio.h>` 和 `#include <stdlib.h>` ✅
+  * 使用 `int arr[] = {1, 2, 3};` ✅
+  * 使用 `printf("%d", arr[0]);` ✅
+  * 使用 `sizeof(arr)/sizeof(arr[0])` ✅
+  * 使用 `struct` 定义数据结构 ✅
+  * 使用 `*` 指针和 `&` 地址符 ✅
+  * 使用 `malloc()` 和 `free()` ✅
+
+【重要约束】
+- **所有代码示例必须使用 C 语言**
+- 使用 `struct` 定义数据结构
+- 使用指针操作 (`*`, `&`)
+- 演示内存管理 (`malloc`, `free`)
+- 强调C语言特有的内存布局和指针概念
+
 【教学流程】
-1. **概念阶段**：确保学生理解定义、特点、优缺点。
-2. **代码分析阶段**：给出代码段（可能包含错误或低效写法），让学生分析。
-3. **完成判断**：只有当学生在概念和代码分析都表现良好时，才允许进入下一个知识点。
+1. **概念阶段 (concept)**：确保学生理解定义、特点、优缺点。
+2. **代码示例阶段 (example)**：给出C语言代码示例，演示如何实现该数据结构。
+3. **互动练习阶段 (practice)**：让学生动手修改或完善代码。
+4. **总结阶段 (summary)**：综合评估学生掌握程度。
+
+【⚠️ 强制要求：每次回复都必须评分】
+- **你的每次回复都必须在最后包含评分标记**：`[SCORE:0-100]`
+- 不同阶段对应不同能力维度：
+  * concept 阶段 → 评估"概念理解"能力
+  * example 阶段 → 评估"代码应用"能力
+  * practice 阶段 → 评估"逻辑思维"能力
+  * summary 阶段 → 评估"举一反三"能力
+- **即使只是简单的提示或鼓励，也必须输出评分！**
+- **不要忘记输出 [SCORE:xx] 标记！**
 
 【交互规则】
 - 语气亲切、鼓励，但对知识点要求严谨。
 - 每次回复的结尾必须是一个明确的问题（除非是恭喜完成）。
 - 如果学生拒绝回答或不知道，降低难度，给出提示或类比解释，然后问一个更简单的问题。
+- 代码示例要包含注释，解释关键部分。
 """
 
     def _build_stage_prompt(self, topic: KnowledgePoint, state: Dict, user_input: str) -> str:
@@ -601,7 +657,7 @@ class CoreTeachingAgent:
         
         base_prompt = f"""
 【当前教学状态】
-- 知识点: {topic.name} ({topic.description})
+- 数据结构知识点: {topic.name} ({topic.description})
 - 阶段: {stage}
 - 深度: Level {depth} (1-5)
 - 当前环节: {current_milestone} (概念理解 -> 代码示例 -> 互动练习 -> 总结)
@@ -611,15 +667,38 @@ class CoreTeachingAgent:
 2. 根据评估结果，决定下一步行动：
    - 如果回答正确且深入，推进到下一个环节。
    - 如果回答模糊或错误，进行引导或纠正，保持在当前环节。
-3. **重要**：
+3. **⚠️ 必须输出评分标记 - 每次回复都要输出！**：
+   - **每次回复都必须在最后输出 `[SCORE:分数]` 标记**（0-100）
+   - 示例：`[SCORE:75]` 或 `[SCORE:90]`
+   - **不同环节对应不同维度**：
+     * concept (概念阶段) → 评分"概念理解"
+     * example (代码示例) → 评分"代码应用"
+     * practice (互动练习) → 评分"逻辑思维"
+     * summary (总结) → 评分"举一反三"
+   - **即使只是简单的鼓励或提示，也要输出评分！**
+4. **重要**：
    - 如果决定切换环节，请在回复开头输出标记 `[STEP:环节代码]` (例如 `[STEP:example]`)。
-   - 请对学生的回答质量进行评分（0-100），并输出标记 `[SCORE:分数]` (例如 `[SCORE:85]`)，请将此标记放在回复的最后。
    - 环节代码：concept, example, practice, summary
    - 如果当前环节已是 summary 且学生理解良好，输出 `[TOPIC_COMPLETED]`.
 
-【教学策略】
-- 费曼学习法：要求学生用简单的语言解释。
-- 苏格拉底提问：通过提问引导思考，而不是直接给答案。
-- 难度适应：当前难度 Level {depth}，请调整问题深度。
+【C语言数据结构教学策略】
+- **概念阶段**：用生活类比解释数据结构，强调其应用场景。
+- **代码示例阶段 (example)**：
+  - 展示完整的C语言 `struct` 定义
+  - 使用指针操作演示数据结构的链接和遍历
+  - 包含内存分配 (`malloc`) 和释放 (`free`) 的代码
+  - 添加详细注释解释每一步操作
+- **互动练习阶段 (practice)**：
+  - 让学生填写缺失的代码段，或找出代码中的错误。
+  - 练习题必须用 C 语言编写
+- **总结阶段 (summary)**：综合评估学生的掌握程度，给出改进建议。
+
+【评分标准】
+- 概念理解 (concept): 对定义和原理的理解程度
+- 代码应用 (example/practice): C语言代码的编写和分析能力
+- 逻辑思维: 对数据结构操作逻辑的掌握
+- 举一反三 (summary): 知识迁移和问题解决能力
+
+当前难度 Level {depth}，请调整问题深度和代码复杂度。
 """
         return base_prompt

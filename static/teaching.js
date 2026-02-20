@@ -195,7 +195,7 @@ async function startKnowledgeLearning() {
             // 更新会话信息
             await updateTeachingInfo();
         } else {
-            alert('开始学习失败: ' + (data.detail || data.message));
+            alert('开始学习失败: ' + (data.error || data.detail || data.message || '未知错误'));
         }
     } catch (error) {
         console.error('开始学习失败:', error);
@@ -245,7 +245,7 @@ async function startErrorAnalysis() {
             // 更新会话信息（包括代码面板）
             await updateTeachingInfo();
         } else {
-            alert('开始分析失败: ' + (data.detail || data.message));
+            alert('开始分析失败: ' + (data.error || data.detail || data.message || '未知错误'));
         }
     } catch (error) {
         console.error('开始分析失败:', error);
@@ -454,13 +454,21 @@ function updateScores(scores) {
     const conceptScore = scores['概念理解'] || 0.5;
     const logicalScore = scores['逻辑思维'] || 0.5;
     const codeScore = scores['代码应用'] || 0.5;
-    const criticalScore = scores['举一反三'] || 0.5;
 
-    // 综合能力 = (逻辑思维 + 代码应用 + 举一反三) / 3
-    const comprehensiveScore = (logicalScore + codeScore + criticalScore) / 3;
+    // 更新概念理解
+    const conceptPercent = Math.round(conceptScore * 100);
+    document.getElementById('concept-score').style.width = conceptPercent + '%';
+    document.getElementById('concept-score-value').textContent = conceptPercent + '%';
 
-    document.getElementById('concept-score').style.width = (conceptScore * 100) + '%';
-    document.getElementById('comprehensive-score').style.width = (comprehensiveScore * 100) + '%';
+    // 更新逻辑思维
+    const logicalPercent = Math.round(logicalScore * 100);
+    document.getElementById('logical-score').style.width = logicalPercent + '%';
+    document.getElementById('logical-score-value').textContent = logicalPercent + '%';
+
+    // 更新代码应用
+    const codePercent = Math.round(codeScore * 100);
+    document.getElementById('code-score').style.width = codePercent + '%';
+    document.getElementById('code-score-value').textContent = codePercent + '%';
 }
 
 // 更新错误代码面板
@@ -505,7 +513,8 @@ async function nextErrorCode() {
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify({
-                session_id: sessionId
+                session_id: sessionId,
+                agent_type: 'error_analysis'
             })
         });
 

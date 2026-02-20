@@ -6,22 +6,48 @@ from dotenv import load_dotenv
 current_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(current_dir, ".env"))
 
+MODEL_CONFIGS = {
+    "coder480b": {
+        "base_url": "https://console.siflow.cn/siflow/auriga/skyinfer/fjing/qwen3-480b-0/v1",
+        "model": "Qwen3-Coder-480B-A35B-Instruct"
+    },
+    "loopcoder": {
+        "base_url": "https://console.siflow.cn/siflow/longmen/skyinfer/wzhang/loopcoder/v1/8020/v1",
+        "model": "loopcoder"
+    }
+}
+
 class ProblemMutator:
     def __init__(self):
-        # Using the custom Loopcoder client config
+        # Default to loopcoder if not specified
         self.api_key = os.getenv("OPEN_AI_API_KEY", "EMPTY")
-        self.base_url = os.getenv("OPEN_AI_BASE_URL", "https://console.siflow.cn/siflow/longmen/skyinfer/wzhang/loopcoder/v1/8000/v1")
-        self.model = os.getenv("MODEL_NAME", "loopcoder")
+        # Default config
+        config = MODEL_CONFIGS["coder480b"] # Default to coder480b as per requirement
+        self.base_url = config["base_url"]
+        self.model = config["model"]
         
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url
         )
 
-    def _generate_standard_solution(self, title, content):
+    def _get_client_and_model(self, model_name=None):
+        if not model_name or model_name not in MODEL_CONFIGS:
+            return self.client, self.model
+        
+        config = MODEL_CONFIGS[model_name]
+        client = OpenAI(
+            api_key=self.api_key,
+            base_url=config["base_url"]
+        )
+        return client, config["model"]
+
+    def _generate_standard_solution(self, title, content, model_name=None):
         """
         Generate a standard C solution using LLM when it's missing from the DB.
         """
+        client, model = self._get_client_and_model(model_name)
+        
         prompt = f"""
         你是一位高级软件工程师。
         任务：针对以下 LeetCode 题目，生成一个标准且优雅的 C 解决方案代码。
@@ -35,8 +61,8 @@ class ProblemMutator:
         3. 不要包含任何解释性文字。
         """
         
-        response = self.client.chat.completions.create(
-            model=self.model,
+        response = client.chat.completions.create(
+            model=model,
             messages=[{"role": "user", "content": prompt}]
         )
         # Basic cleanup of markdown code blocks
@@ -46,36 +72,6 @@ class ProblemMutator:
         elif code.startswith("```"):
             code = code.split("```")[1].split("```")[0].strip()
         return code
-
-    def mutate(self, seed_question, target_type):
-        """
-        seed_question: dict containing original problem data
-        target_type: "fill_in_the_blank", "bug_finding", "story_rewrite"
-        """
-        # Extract description (handle HTML)
-        description = seed_question.get("content", "")
-        
-        # Extract C code snippet
-        original_code = ""
-        snippets = seed_question.get("codeSnippets", [])
-        if snippets:
-            for snippet in snippets:
-                if snippet.get("lang") == "C":
-                    original_code = snippet["code"]
-                    break
-        
-        if not original_code:
-            # Fallback for older or different formats
-            original_code = seed_question.get("code", "")
-            
-        # IF STILL EMPTY, generate using LLM
-        if not original_code:
-            print("警告: 未在题库中找到代码片段。正在请求大模型生成标准题解...")
-            original_code = self._generate_standard_solution(
-                seed_question.get("title", ""), 
-                seed_question.get("content", "")
-            )
-            print(f"成功生成 '{seed_question.get('title')}' 的标准题解。")
 
     def _parse_tags(self, text, tags):
         """
@@ -92,11 +88,14 @@ class ProblemMutator:
                 result[tag.lower()] = ""
         return result
 
-    def mutate(self, seed_question, target_type):
+    def mutate(self, seed_question, target_type, model_name=None):
         """
         seed_question: dict containing original problem data
         target_type: "fill_in_the_blank", "bug_finding", etc.
+        model_name: "coder480b" or "loopcoder"
         """
+        client, model = self._get_client_and_model(model_name)
+        
         description = seed_question.get("content", "")
         original_code = ""
         snippets = seed_question.get("codeSnippets", [])
@@ -113,7 +112,8 @@ class ProblemMutator:
             print("警告: 未在题库中找到代码片段。正在请求大模型生成标准题解...")
             original_code = self._generate_standard_solution(
                 seed_question.get("title", ""), 
-                seed_question.get("content", "")
+                seed_question.get("content", ""),
+                model_name
             )
             print(f"成功生成 '{seed_question.get('title')}' 的标准题解。")
 
@@ -178,8 +178,8 @@ class ProblemMutator:
             return json.dumps({"error": "Invalid target type"})
 
         for attempt in range(2):
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = client.chat.completions.create(
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=2000
