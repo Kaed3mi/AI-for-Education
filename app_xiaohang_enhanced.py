@@ -353,6 +353,96 @@ def generate_problem():
     
     return Response(stream_with_context(generate_response()), mimetype='text/event-stream')
 
+
+@xiaohang_enhanced_bp.route('/set_custom_problem', methods=['POST'])
+def set_custom_problem():
+    """用户自主出题 - 将用户输入的题目存入Redis，并后台生成标准答案"""
+    session_id = session.get('xiaohang_session_id')
+    if not session_id:
+        return jsonify({"error": "会话未初始化"}), 400
+
+    data = request.get_json()
+    problem_text = (data.get('problem_text') or '').strip()
+    if not problem_text:
+        return jsonify({"error": "题目内容不能为空"}), 400
+
+    topics = session.get('xiaohang_topics', [])
+    language = session.get('xiaohang_language', 'C')
+    redis_client = get_redis_client()
+    problem_key = f"xiaohang_problem:{session_id}"
+
+    # 清理之前的模块输出
+    clear_all_guidance_outputs(session_id)
+
+    # 先存储题目（标准答案稍后更新）
+    redis_client.setex(
+        problem_key,
+        3600,
+        json.dumps({
+            "problem": problem_text,
+            "standard_answer": "",
+            "difficulty": "自主出题",
+            "topics": topics,
+            "timestamp": time.time()
+        })
+    )
+
+    # 后台生成标准答案
+    try:
+        topics_str = '、'.join(topics) if topics else '综合'
+        lang_code_block = 'c' if language == 'C' else 'python'
+        lang_desc = 'C语言' if language == 'C' else 'Python'
+        main_func_req = '3. 包含必要的头文件和main函数' if language == 'C' else '3. 包含完整的可运行代码结构'
+        answer_prompt = f"""你是一名专业的{lang_desc}数据结构与算法专家。请为以下题目提供完整的正确答案代码。
+
+【题目】：
+{problem_text}
+
+【知识点】：{topics_str}
+
+【要求】：
+1. 提供完整的、可运行的{lang_desc}代码
+2. 代码中必须包含详细、必要的注释，解释关键步骤和逻辑
+{main_func_req}
+4. 不需要在代码外单独说明算法思路
+
+【输出格式】：
+## 标准答案
+
+**完整代码：**
+```{lang_code_block}
+[完整的{lang_desc}代码，包含详细注释]
+```
+
+**复杂度分析：**
+- 时间复杂度：[分析]
+- 空间复杂度：[分析]
+
+请生成标准答案："""
+
+        llm = get_llm(session.get('xiaohang_model', 'xhang'))
+        standard_answer = ""
+        for content_piece in llm._call(answer_prompt):
+            standard_answer += content_piece
+
+        redis_client.setex(
+            problem_key,
+            3600,
+            json.dumps({
+                "problem": problem_text,
+                "standard_answer": standard_answer,
+                "standard_answer_language": language,
+                "difficulty": "自主出题",
+                "topics": topics,
+                "timestamp": time.time()
+            })
+        )
+    except Exception as e:
+        print(f"[自主出题] 标准答案生成失败: {e}")
+
+    return jsonify({"message": "自主出题设置成功", "problem_text": problem_text})
+
+
 @xiaohang_enhanced_bp.route('/submit_code', methods=['POST'])
 def submit_code():
     """提交代码并判断正确性 - 简洁判定模式"""

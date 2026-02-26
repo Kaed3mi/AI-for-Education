@@ -1909,14 +1909,17 @@
                             <span class="icon">🔑</span>代码补全
                         </button>
                     </div>
-                    <select id="difficulty-selector" class="difficulty-selector 简单" onchange="onDifficultyChange(this.value)">
+                    <button class="toolbar-btn" id="custom-problem-btn" onclick="startCustomProblem()" style="margin-left:auto;background:#fff3e0;border-color:#ff9800;color:#e65100;height:34px;display:inline-flex;align-items:center;">
+                        <span class="icon">✏️</span>自主出题
+                    </button>
+                    <select id="difficulty-selector" class="difficulty-selector 简单" onchange="onDifficultyChange(this.value)" style="margin-left:6px;height:34px;">
                         <option value="简单">简单</option>
                         <option value="中等">中等</option>
                         <option value="困难">困难</option>
                     </select>
-                    <select id="model-selector" class="model-selector loopcoder" onchange="onModelChange(this.value)">
-                        <option value="xhang">XHang大模型</option>
-                        <option value="loopcoder" selected>LoopCoder大模型</option>
+                    <select id="model-selector" class="model-selector loopcoder" onchange="onModelChange(this.value)" style="height:34px;">
+                        <option value="xhang">XHang</option>
+                        <option value="loopcoder" selected>LoopCoder</option>
                         <option value="normal">普通模型</option>
                     </select>
                 </div>

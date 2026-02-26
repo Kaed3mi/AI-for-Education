@@ -60,6 +60,27 @@ const AVATAR_FOLLOWUP_MODULES = ['思路', '框架', '伪代码', '核心语句'
 document.addEventListener('DOMContentLoaded', function() {
     initKnowledgeGrid();
     initMermaid();
+
+    // 支持重复点击相同难度重新出题
+    // 思路：下拉展开时临时清除选中项，这样无论选哪个都会触发 change
+    const diffSel = document.getElementById('difficulty-selector');
+    if (diffSel) {
+        let savedValue = diffSel.value;
+        diffSel.addEventListener('mousedown', function() {
+            savedValue = this.value;
+            this.selectedIndex = -1;  // 清除选中，确保 change 一定触发
+        });
+        diffSel.addEventListener('change', function() {
+            savedValue = this.value;
+            // onchange 在 HTML 上已绑定，会自动调用 onDifficultyChange
+        });
+        diffSel.addEventListener('blur', function() {
+            // 如果用户点开下拉后没选就关闭了，恢复原来的值
+            if (this.selectedIndex === -1) {
+                this.value = savedValue;
+            }
+        });
+    }
 });
 
 function initKnowledgeGrid() {
@@ -384,36 +405,83 @@ function fixParenthesesInNodes(code) {
         if (!line.trim() || line.trim().startsWith('%%') || /^\s*(flowchart|graph)\s/i.test(line.trim())) {
             return line;
         }
+
+        // 智能处理方括号节点：找到 节点ID[ 开头，然后向后扫描找到正确的闭合 ]
+        // 这样可以处理节点文本中包含 [ ] 的情况（如 nums[i]）
+        line = fixBracketNodeContent(line);
         
-        // 替换方括号节点 [...] 中的英文括号为中文括号
-        line = line.replace(/\[([^\]]*)\]/g, (match, content) => {
-            let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
-            return '[' + fixed + ']';
-        });
-        
-        // 替换双花括号节点 {{...}} 中的英文括号为中文括号（先处理双花括号，避免被单花括号匹配）
+        // 替换双花括号节点 {{...}} 中的特殊字符
         line = line.replace(/\{\{([^}]*)\}\}/g, (match, content) => {
             let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
+            fixed = fixed.replace(/\[/g, '【').replace(/\]/g, '】');
             return '{{' + fixed + '}}';
         });
         
-        // 替换菱形节点 {...} 中的英文括号为中文括号
-        // 注意：需要排除已处理的 {{...}} 和箭头标签 |...|
-        // 匹配单花括号菱形节点：字母/数字后跟{...}
+        // 替换菱形节点 {...} 中的特殊字符
         line = line.replace(/(\w)\{([^{}]*)\}/g, (match, prefix, content) => {
             let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
+            fixed = fixed.replace(/\[/g, '【').replace(/\]/g, '】');
             return prefix + '{' + fixed + '}';
         });
         
-        // 替换箭头标签 |...| 中的英文括号为中文括号
+        // 替换箭头标签 |...| 中的特殊字符
         line = line.replace(/\|([^|]*)\|/g, (match, content) => {
             let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
+            fixed = fixed.replace(/\[/g, '【').replace(/\]/g, '】');
             return '|' + fixed + '|';
         });
         
         return line;
     });
     return lines.join('\n');
+}
+
+// 智能处理方括号节点内容：扫描找到节点ID[...] 并替换内部的特殊字符
+function fixBracketNodeContent(line) {
+    // 匹配节点ID后跟 [ 的位置（节点ID通常是字母/数字/下划线）
+    let result = '';
+    let i = 0;
+    while (i < line.length) {
+        // 检测是否是节点定义的开始：字母/数字后跟 [
+        // 但排除箭头标签 |...|  中的内容
+        if (line[i] === '[') {
+            // 向前检查是否有节点ID（字母/数字/下划线）
+            let hasNodeId = i > 0 && /[\w]/.test(line[i - 1]);
+            // 也可能是行首缩进后直接 ID[
+            if (!hasNodeId && i > 0) {
+                // 检查前面是否是空格+节点ID
+                let j = i - 1;
+                while (j >= 0 && /[\w]/.test(line[j])) j--;
+                hasNodeId = j < i - 1; // 至少有一个字母/数字
+            }
+
+            if (hasNodeId) {
+                // 这是一个节点定义 [...], 找到最后一个 ] 作为闭合
+                // 从当前位置向后找最后一个 ] （贪婪匹配到行尾方向最后的 ]）
+                let lastBracket = -1;
+                for (let k = i + 1; k < line.length; k++) {
+                    if (line[k] === ']') lastBracket = k;
+                    // 遇到箭头 --> 或 --- 就停止搜索
+                    if (line[k] === '-' && k + 1 < line.length && line[k + 1] === '-') break;
+                    // 遇到管道符 | 也停止
+                    if (line[k] === '|') break;
+                }
+
+                if (lastBracket > i) {
+                    // 提取节点内容并替换特殊字符
+                    let content = line.substring(i + 1, lastBracket);
+                    content = content.replace(/\(/g, '（').replace(/\)/g, '）');
+                    content = content.replace(/\[/g, '【').replace(/\]/g, '】');
+                    result += '[' + content + ']';
+                    i = lastBracket + 1;
+                    continue;
+                }
+            }
+        }
+        result += line[i];
+        i++;
+    }
+    return result;
 }
 
 
@@ -2300,8 +2368,6 @@ function checkAndUpdateDifficulty(text) {
 // ==================== 难度切换 ====================
 
 async function onDifficultyChange(newDifficulty) {
-    if (newDifficulty === currentDifficulty) return;
-    
     try {
         const response = await fetch('/api/xiaohang/change_difficulty', {
             method: 'POST',
@@ -5259,3 +5325,145 @@ generateProblem = async function() {
     renderBubbles();
     return _originalGenerateProblem();
 };
+
+// ==================== 自主出题功能 ====================
+
+let isCustomProblemMode = false; // 是否处于自主出题模式
+
+function startCustomProblem() {
+    if (!confirm('现有所有已生成模块将全部清空，是否确认自主出题？')) return;
+
+    isCustomProblemMode = true;
+
+    // 清空所有浮动面板和状态（与切换难度时相同）
+    for (const [panelId, controller] of activeAbortControllers) {
+        try { controller.abort(); } catch(e) {}
+    }
+    activeAbortControllers.clear();
+
+    const allPanelIds = Array.from(floatingPanels.keys());
+    for (const panelId of allPanelIds) {
+        const panelEl = document.getElementById(`floating-panel-${panelId}`);
+        if (panelEl) panelEl.remove();
+    }
+    floatingPanels.clear();
+    panelIdByType.clear();
+    panelStreamBuffers.clear();
+    panelContentReady.clear();
+    currentPanelId = null;
+    activePanelId = null;
+    floatingPanelVisible = false;
+    panelZIndexCounter = 1000;
+    renderBubbles();
+
+    closeFollowupChat();
+    hideFloatingAvatar();
+    followupChatHistory = {};
+    currentGuidanceType = null;
+
+    isModuleGenerating = false;
+    currentGeneratingModule = null;
+    isRightModuleGenerating = false;
+    currentRightGeneratingType = null;
+    unlockModuleButtons();
+
+    pregenerateStarted = false;
+    pregeneratedModules.clear();
+    pregeneratingModule = null;
+    analysisGenerated = false;
+    frameworkGenerated = false;
+
+    if (typeof cleanupMermaidErrors === 'function') cleanupMermaidErrors();
+
+    const lang = document.getElementById('language-selector').value;
+    setEditorCode(getDefaultCode(lang));
+    if (typeof MonacoEditorManager !== 'undefined' && MonacoEditorManager.clearDiagnosisMarkers) {
+        MonacoEditorManager.clearDiagnosisMarkers();
+    }
+    diagnosisHasErrors = true;
+    codeIsCorrect = false;
+
+    document.getElementById('right-content-display').innerHTML =
+        '<p style="color: #888; text-align: center;">点击上方按钮获取提示或分析结果</p>';
+    updateRightButtonsAfterSubmit();
+
+    // 切换左侧到题目描述并显示编辑框
+    setActiveLeftButton('题目');
+    currentLeftType = '题目';
+    problemContent = '';
+
+    const display = document.getElementById('left-content-display');
+    display.innerHTML = `
+        <div style="padding: 10px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+                <span style="font-size:20px;">✏️</span>
+                <span style="font-size:16px;font-weight:600;color:#e65100;">自主出题</span>
+                <span style="font-size:13px;color:#999;">粘贴或输入你的题目内容</span>
+            </div>
+            <textarea id="custom-problem-input" placeholder="在此粘贴或输入你的编程题目内容...&#10;&#10;建议包含：题目描述、输入格式、输出格式、样例输入输出等"
+                style="width:100%;min-height:600px;padding:14px;border:2px solid #ff9800;border-radius:10px;font-size:14px;line-height:1.8;resize:vertical;font-family:inherit;"></textarea>
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;">
+                <button onclick="cancelCustomProblem()" style="padding:10px 22px;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;font-size:14px;cursor:pointer;color:#666;">取消</button>
+                <button onclick="confirmCustomProblem()" style="padding:10px 22px;background:linear-gradient(135deg,#ff9800,#f57c00);border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;color:#fff;">确认出题</button>
+            </div>
+        </div>
+    `;
+}
+
+function cancelCustomProblem() {
+    isCustomProblemMode = false;
+    const display = document.getElementById('left-content-display');
+    if (problemContent) {
+        display.innerHTML = renderMarkdown(problemContent);
+        highlightCode(display);
+    } else {
+        generateProblem();
+    }
+}
+
+async function confirmCustomProblem() {
+    const input = document.getElementById('custom-problem-input');
+    const text = input ? input.value.trim() : '';
+    if (!text) {
+        alert('请输入题目内容！');
+        return;
+    }
+
+    const display = document.getElementById('left-content-display');
+    display.innerHTML = '<p class="loading">正在设置自主题目...</p>';
+
+    try {
+        const response = await fetch('/api/xiaohang/set_custom_problem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ problem_text: text })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || '设置失败');
+            display.innerHTML = '<p style="color:#e74c3c;">设置失败，请重试</p>';
+            return;
+        }
+
+        // 设置成功
+        problemContent = text;
+        display.innerHTML = renderMarkdown(text);
+        highlightCode(display);
+
+        // 重置预生成状态
+        pregenerateStarted = false;
+        pregeneratedModules.clear();
+        pregeneratingModule = null;
+        analysisGenerated = false;
+        frameworkGenerated = false;
+
+        alert('题目设置成功！你现在可以使用所有功能了。');
+        isCustomProblemMode = false;
+
+    } catch (error) {
+        console.error('Error:', error);
+        display.innerHTML = '<p style="color:#e74c3c;">网络错误，请重试</p>';
+    }
+}
