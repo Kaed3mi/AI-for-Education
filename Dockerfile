@@ -25,8 +25,11 @@ RUN echo "flask==2.3.3" > requirements-docker.txt && \
 RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com -r requirements-docker.txt
 
 # 复制应用代码
-COPY app.py config.py config_programming_assistant.py app_xiaohang_enhanced.py models.py ./
+COPY app.py config.py config_programming_assistant.py app_xiaohang.py app_xiaohang_enhanced.py app_teaching.py models.py ./
 COPY static/ ./static/
+COPY TeachingAgent/ ./TeachingAgent/
+COPY generator_kit/ ./generator_kit/
+COPY xiaohang_integration/ ./xiaohang_integration/
 
 # 创建非 root 用户
 RUN useradd --create-home --shell /bin/bash app && \
@@ -34,7 +37,7 @@ RUN useradd --create-home --shell /bin/bash app && \
 USER app
 
 # 暴露端口
-EXPOSE 5011
+EXPOSE 5000
 
 # 设置启动命令
 CMD ["python", "app.py"]

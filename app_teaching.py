@@ -9,13 +9,13 @@ from typing import Dict, Any, List, Optional
 
 # Add TeachingAgent paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# TeachingAgent is now inside the programate directory
 teaching_agent_dir = os.path.join(current_dir, 'TeachingAgent')
 
 if teaching_agent_dir not in sys.path:
     sys.path.insert(0, teaching_agent_dir)
-if os.path.join(teaching_agent_dir, 'src') not in sys.path:
-    sys.path.insert(0, os.path.join(teaching_agent_dir, 'src'))
+src_path = os.path.join(teaching_agent_dir, 'src')
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
 # Import agents and client
 try:
@@ -106,17 +106,16 @@ def get_llm_client():
     # The app.py loads .env, so os.environ should have them.
     # We can also fallback to hardcoded defaults or raise error.
     api_key = os.getenv("SIFLOW_API_KEY") or os.getenv("API_KEY")
-    # Use Xhang API from .env
-    default_url = "https://xhang.buaa.edu.cn/xhang/v1"
-    default_model = "xhang"
-    default_key = "f93082e1-2cbf-4f81-af8f-9c98d528b6b1"
+    # Use Siflow URL if available, otherwise default
+    api_base = "https://console.siflow.cn/siflow/longmen/skyinfer/fjing/qwen-lcb/v1/8020/v1" 
+    # Check if app.py defined MODEL_ENDPOINTS, maybe we can reuse?
+    # For now, let's use what LLMClient expects or defaults.
     
-    api_base = os.getenv("SIFLOW_API_BASE", default_url)
-    model = os.getenv("SIFLOW_MODEL", default_model)
-    api_key = os.getenv("SIFLOW_API_KEY") or os.getenv("API_KEY") or default_key
+    # Actually, let's check what app.py uses.
+    # app.py uses "https://console.siflow.cn/..."
     
     # We will try to instantiate LLMClient with env vars.
-    return LLMClient(api_key=api_key, api_base=api_base, model=model)
+    return LLMClient(api_key=api_key)
 
 def get_or_create_agent_session(session_id: str, agent_type: str):
     """Get or create an agent session"""

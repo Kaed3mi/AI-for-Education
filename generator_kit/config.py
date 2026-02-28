@@ -3,10 +3,18 @@
 """
 
 # LLM API 配置
+# LLM_CONFIG = {
+#     "api_key": "f93082e1-2cbf-4f81-af8f-9c98d528b6b1",
+#     "base_url": "https://xhang.buaa.edu.cn/xhang/v1",
+#     "model": "xhang",
+#     "timeout": 120,
+#     "max_retries": 3,
+# }
+
 LLM_CONFIG = {
-    "api_key": "f93082e1-2cbf-4f81-af8f-9c98d528b6b1",
-    "base_url": "https://xhang.buaa.edu.cn/xhang/v1",
-    "model": "xhang",
+    "api_key": "EMPTY",
+    "base_url": "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-loop/v1/8000/v1",
+    "model": "IQuest-Coder-V1-40B-Loop-Instruct",
     "timeout": 120,
     "max_retries": 3,
 }

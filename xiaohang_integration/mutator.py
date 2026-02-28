@@ -8,12 +8,12 @@ load_dotenv(os.path.join(current_dir, ".env"))
 
 MODEL_CONFIGS = {
     "coder480b": {
-        "base_url": "https://console.siflow.cn/siflow/auriga/skyinfer/fjing/qwen3-480b-0/v1",
-        "model": "Qwen3-Coder-480B-A35B-Instruct"
+        "base_url": "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-no-loop/v1/8000/v1",
+        "model": "IQuest-Coder-V1-40B-Instruct"
     },
     "loopcoder": {
-        "base_url": "https://console.siflow.cn/siflow/longmen/skyinfer/wzhang/loopcoder/v1/8020/v1",
-        "model": "loopcoder"
+        "base_url": "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-loop/v1/8000/v1",
+        "model": "IQuest-Coder-V1-40B-Loop-Instruct"
     }
 }
 
