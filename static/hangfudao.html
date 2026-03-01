@@ -1874,15 +1874,25 @@
     </style>
 </head>
 <body>
-    <!-- 知识点选择页面 -->
+    <!-- 知识点/作业选择页面 -->
     <div id="selection-page" class="selection-page">
         <div class="selection-header">
             <h1>🚀 航辅导</h1>
-            <p>智能编程辅导系统 · 选择一个知识点开始学习</p>
+            <p>智能编程辅导系统 · 选择一个知识点或作业开始学习</p>
         </div>
         
-        <div class="knowledge-grid" id="knowledge-grid">
-            <!-- JavaScript动态生成 -->
+        <div style="display:flex;gap:30px;max-width:1100px;width:100%;padding:0 20px;">
+            <!-- 左侧分类导航 -->
+            <div style="min-width:160px;display:flex;flex-direction:column;gap:10px;">
+                <button class="knowledge-btn selected" id="cat-btn-knowledge" onclick="switchCategory('knowledge')" style="font-size:16px;padding:16px 20px;">📚 知识点</button>
+                <button class="knowledge-btn" id="cat-btn-homework1" onclick="switchCategory('homework1')" style="font-size:16px;padding:16px 20px;">📝 第一次作业</button>
+            </div>
+            <!-- 右侧内容区 -->
+            <div style="flex:1;">
+                <div class="knowledge-grid" id="knowledge-grid">
+                    <!-- JavaScript动态生成 -->
+                </div>
+            </div>
         </div>
     </div>
     
@@ -2001,6 +2011,7 @@
     <!-- 多浮动窗口容器 -->
     <div id="floating-panels-container"></div>
     
+    <script src="/static/homework_data.js"></script>
     <script src="/static/hangfudao.js"></script>
 
     <!-- 悬浮追问小人 -->

@@ -129,6 +129,26 @@ async function initMonacoEditor(containerId, options = {}) {
         // 合并配置
         const editorOptions = { ...defaultOptions, ...options };
 
+        // 定义自定义浅色主题，覆盖括号配对颜色（避免与注释绿色冲突）
+        monaco.editor.defineTheme('vs-custom-light', {
+            base: 'vs',
+            inherit: true,
+            rules: [],
+            colors: {
+                'editorBracketHighlight.foreground1': '#0431fa',   // 蓝色
+                'editorBracketHighlight.foreground2': '#e06c00',   // 橙色
+                'editorBracketHighlight.foreground3': '#a626a4',   // 紫色
+                'editorBracketHighlight.foreground4': '#d63384',   // 粉红
+                'editorBracketHighlight.foreground5': '#0b7285',   // 青色
+                'editorBracketHighlight.foreground6': '#c18401',   // 金色
+            }
+        });
+
+        // 如果用户选择了 vs（浅色）主题，替换为自定义主题
+        if (editorOptions.theme === 'vs') {
+            editorOptions.theme = 'vs-custom-light';
+        }
+
         // 创建编辑器
         monacoEditor = monaco.editor.create(container, editorOptions);
         currentLanguage = options.language || 'c';
@@ -1297,7 +1317,9 @@ function toggleEditorTheme() {
     if (!window.monaco || !monacoEditor) return;
     
     const currentTheme = monacoEditor._themeService._theme.themeName;
-    const newTheme = currentTheme === 'vs-dark' ? 'vs' : 'vs-dark';
+    // 浅色主题使用自定义主题（避免括号与注释同色）
+    const isDark = currentTheme === 'vs-dark';
+    const newTheme = isDark ? 'vs-custom-light' : 'vs-dark';
     monaco.editor.setTheme(newTheme);
 }
 

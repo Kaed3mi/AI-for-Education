@@ -8,6 +8,15 @@ const KNOWLEDGE_POINTS = [
     '排序', '查找', '动态规划', '贪心', '回溯', '递归'
 ];
 
+// ==================== 作业模式数据 ====================
+// 作业模式标记
+let homeworkMode = false;       // 是否处于作业模式
+let currentHomeworkId = '';      // 当前作业ID，如 'homework1'
+let currentHomeworkProblemIdx = 0; // 当前题目索引
+let currentCategory = 'knowledge'; // 当前选择页分类
+
+// 作业数据从 homework_data.js 中加载（HOMEWORK_DATA 全局变量）
+
 let selectedTopic = null;
 let sessionId = null;
 let currentDifficulty = '简单';
@@ -87,13 +96,340 @@ function initKnowledgeGrid() {
     const grid = document.getElementById('knowledge-grid');
     grid.innerHTML = '';
     
-    KNOWLEDGE_POINTS.forEach(point => {
-        const btn = document.createElement('button');
-        btn.className = 'knowledge-btn';
-        btn.textContent = point;
-        btn.onclick = () => selectKnowledge(point, btn);
-        grid.appendChild(btn);
+    if (currentCategory === 'knowledge') {
+        // 知识点模式
+        KNOWLEDGE_POINTS.forEach(point => {
+            const btn = document.createElement('button');
+            btn.className = 'knowledge-btn';
+            btn.textContent = point;
+            btn.onclick = () => selectKnowledge(point, btn);
+            grid.appendChild(btn);
+        });
+    } else if (currentCategory.startsWith('homework')) {
+        // 作业模式 - 显示题目列表
+        const hwData = HOMEWORK_DATA[currentCategory];
+        if (hwData) {
+            hwData.problems.forEach((prob, idx) => {
+                const btn = document.createElement('button');
+                btn.className = 'knowledge-btn';
+                btn.textContent = prob.title;
+                btn.onclick = () => selectHomeworkProblem(currentCategory, idx, btn);
+                grid.appendChild(btn);
+            });
+        }
+    }
+}
+
+// 切换选择页分类（知识点 / 作业）
+function switchCategory(category) {
+    currentCategory = category;
+    // 更新左侧按钮样式
+    document.querySelectorAll('[id^="cat-btn-"]').forEach(btn => btn.classList.remove('selected'));
+    const activeBtn = document.getElementById('cat-btn-' + category);
+    if (activeBtn) activeBtn.classList.add('selected');
+    // 重新渲染右侧网格
+    initKnowledgeGrid();
+}
+
+// 选择作业题目
+async function selectHomeworkProblem(homeworkId, problemIdx, btn) {
+    // 取消之前的选择
+    document.querySelectorAll('.knowledge-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    
+    homeworkMode = true;
+    currentHomeworkId = homeworkId;
+    currentHomeworkProblemIdx = problemIdx;
+    
+    const hwData = HOMEWORK_DATA[homeworkId];
+    const problem = hwData.problems[problemIdx];
+    
+    // 初始化作业会话
+    try {
+        const response = await fetch('/api/xiaohang/init_homework_session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ homework_id: hwData.name })
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+            sessionId = data.session_id;
+            enterHomeworkPracticePage(problem);
+        } else {
+            alert(data.error || '初始化失败');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('网络错误，请重试');
+    }
+}
+
+// 进入作业练习页面
+function enterHomeworkPracticePage(problem) {
+    document.body.classList.add('practice-mode');
+    document.getElementById('selection-page').classList.add('hidden');
+    document.getElementById('practice-page').classList.add('active');
+    
+    // 初始化分割线
+    if (typeof initResizers === 'function') initResizers();
+    
+    // 初始化Monaco编辑器
+    initMonacoEditor();
+    
+    // 替换难度选择器为题目选择器
+    setupHomeworkDifficultySelector();
+    
+    // 显示当前题目
+    showHomeworkProblem(problem);
+    
+    // 将题目存入Redis（通过set_custom_problem接口）
+    storeHomeworkProblemToBackend(problem);
+}
+
+// 设置作业模式的题目选择器（替换难度选择器）
+function setupHomeworkDifficultySelector() {
+    const selector = document.getElementById('difficulty-selector');
+    if (!selector) return;
+    
+    const hwData = HOMEWORK_DATA[currentHomeworkId];
+    if (!hwData) return;
+    
+    // 清空并重新填充选项
+    selector.innerHTML = '';
+    hwData.problems.forEach((prob, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `第${idx + 1}题`;
+        selector.appendChild(opt);
     });
+    selector.value = currentHomeworkProblemIdx;
+    
+    // 修改样式
+    selector.className = 'difficulty-selector 简单';
+    
+    // 替换onchange事件
+    selector.onchange = function() {
+        const newIdx = parseInt(this.value);
+        switchHomeworkProblem(newIdx);
+    };
+}
+
+// 切换作业题目
+async function switchHomeworkProblem(newIdx) {
+    const hwData = HOMEWORK_DATA[currentHomeworkId];
+    if (!hwData || newIdx < 0 || newIdx >= hwData.problems.length) return;
+    
+    currentHomeworkProblemIdx = newIdx;
+    const problem = hwData.problems[newIdx];
+    
+    // 全面清理状态（类似onDifficultyChange）
+    // 1. 中止所有正在进行的流式请求
+    for (const [panelId, controller] of activeAbortControllers) {
+        try { controller.abort(); } catch(e) {}
+    }
+    activeAbortControllers.clear();
+    
+    // 2. 关闭所有浮动面板
+    const allPanelIds = Array.from(floatingPanels.keys());
+    for (const panelId of allPanelIds) {
+        const panelEl = document.getElementById(`floating-panel-${panelId}`);
+        if (panelEl) panelEl.remove();
+    }
+    floatingPanels.clear();
+    panelIdByType.clear();
+    panelStreamBuffers.clear();
+    panelContentReady.clear();
+    currentPanelId = null;
+    activePanelId = null;
+    floatingPanelVisible = false;
+    panelZIndexCounter = 1000;
+    
+    // 3. 清理最小化气泡
+    if (typeof renderBubbles === 'function') renderBubbles();
+    
+    // 4. 关闭追问小窗和悬浮小人
+    if (typeof closeFollowupChat === 'function') closeFollowupChat();
+    if (typeof hideFloatingAvatar === 'function') hideFloatingAvatar();
+    if (typeof followupChatHistory !== 'undefined') followupChatHistory = {};
+    if (typeof currentGuidanceType !== 'undefined') currentGuidanceType = null;
+    
+    // 5. 解锁模块按钮
+    isModuleGenerating = false;
+    currentGeneratingModule = null;
+    isRightModuleGenerating = false;
+    currentRightGeneratingType = null;
+    if (typeof unlockModuleButtons === 'function') unlockModuleButtons();
+    
+    // 6. 重置预生成状态
+    pregenerateStarted = false;
+    pregeneratedModules.clear();
+    pregeneratingModule = null;
+    analysisGenerated = false;
+    frameworkGenerated = false;
+    
+    // 7. 清理 Mermaid 残留
+    if (typeof cleanupMermaidErrors === 'function') cleanupMermaidErrors();
+    
+    // 8. 清空编辑器
+    const lang = document.getElementById('language-selector').value;
+    setEditorCode(getDefaultCode(lang));
+    if (typeof MonacoEditorManager !== 'undefined' && MonacoEditorManager.clearDiagnosisMarkers) {
+        MonacoEditorManager.clearDiagnosisMarkers();
+    }
+    diagnosisHasErrors = true;
+    codeIsCorrect = false;
+    
+    // 9. 清空右侧内容并重置右侧按钮状态
+    document.getElementById('right-content-display').innerHTML = 
+        '<p style="color: #8899aa; text-align: center;">点击上方按钮获取提示或分析结果</p>';
+    currentRightType = null;
+    document.querySelectorAll('.right-toolbar-left .toolbar-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    if (typeof updateRightButtonsAfterSubmit === 'function') updateRightButtonsAfterSubmit();
+    
+    // 10. 重置左侧按钮状态
+    if (typeof setActiveLeftButton === 'function') setActiveLeftButton('题目');
+    currentLeftType = '题目';
+    
+    // 11. 清空旧的 problemContent 防止残留
+    problemContent = '';
+    
+    // 12. 先将新题目存入后端（同步等待，确保后端清除旧模块缓存后再继续）
+    await storeHomeworkProblemToBackend(problem);
+    
+    // 13. 显示新题目
+    showHomeworkProblem(problem);
+}
+
+// 显示作业题目
+function showHomeworkProblem(problem) {
+    const display = document.getElementById('left-content-display');
+    problemContent = problem.description;
+    display.innerHTML = renderMarkdown(problemContent);
+    highlightCode(display);
+}
+
+// 将作业题目存入后端Redis（轻量级，不生成标准答案，立即返回）
+async function storeHomeworkProblemToBackend(problem) {
+    try {
+        await fetch('/api/xiaohang/switch_homework_problem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ problem_text: problem.description })
+        });
+    } catch (e) {
+        console.error('存储作业题目失败:', e);
+    }
+}
+
+// 作业模式提交代码 - 使用测试用例判定
+async function submitCodeHomework() {
+    const code = getEditorCode().trim();
+    if (!code || code === getDefaultCode('c').trim() || code === getDefaultCode('python').trim()) {
+        alert('请先编写代码！');
+        return;
+    }
+    
+    const hwData = HOMEWORK_DATA[currentHomeworkId];
+    if (!hwData) return;
+    const problem = hwData.problems[currentHomeworkProblemIdx];
+    if (!problem) return;
+    
+    const display = document.getElementById('right-content-display');
+    display.innerHTML = '<p class="loading">正在评测中...</p>';
+    
+    // 清除右侧按钮激活状态
+    document.querySelectorAll('.right-toolbar-left .toolbar-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    try {
+        const response = await fetch('/api/xiaohang/submit_code_homework', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                code: code,
+                test_cases: problem.testCases
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.result === 'error') {
+            display.innerHTML = `<p style="color: #e74c3c; text-align: center;">${result.message}</p>`;
+            return;
+        }
+        
+        // 渲染测试结果
+        display.innerHTML = renderHomeworkResult(result);
+        
+        // 更新状态
+        codeIsCorrect = result.all_passed;
+        if (typeof updateRightButtonsAfterSubmit === 'function') updateRightButtonsAfterSubmit();
+        
+    } catch (error) {
+        console.error('Error:', error);
+        display.innerHTML = '<p style="color: #e74c3c; text-align: center;">提交失败，请重试</p>';
+    }
+}
+
+// 渲染作业模式测试结果
+function renderHomeworkResult(result) {
+    const { passed, total, all_passed, results } = result;
+    const percentage = Math.round((passed / total) * 100);
+    
+    let icon, title, bgGradient, borderColor, titleColor, iconBg;
+    
+    if (all_passed) {
+        icon = '🎉';
+        title = '恭喜，全部通过！';
+        bgGradient = 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)';
+        borderColor = '#86efac';
+        titleColor = '#166534';
+        iconBg = 'rgba(34, 197, 94, 0.1)';
+    } else if (passed > 0) {
+        icon = '⚠️';
+        title = `通过 ${percentage}% 测试点（${passed}/${total}）`;
+        bgGradient = 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)';
+        borderColor = '#fcd34d';
+        titleColor = '#92400e';
+        iconBg = 'rgba(245, 158, 11, 0.1)';
+    } else {
+        icon = '❌';
+        title = `未通过任何测试点（0/${total}）`;
+        bgGradient = 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)';
+        borderColor = '#fca5a5';
+        titleColor = '#991b1b';
+        iconBg = 'rgba(239, 68, 68, 0.1)';
+    }
+    
+    // 构建测试点详情（不显示测试数据）
+    let detailHtml = '<div style="margin-top:16px;text-align:left;">';
+    results.forEach(r => {
+        const statusIcon = r.passed ? '✅' : '❌';
+        const statusText = r.passed ? '通过' : (r.reason || '未通过');
+        const statusColor = r.passed ? '#166534' : '#991b1b';
+        const statusBg = r.passed ? '#dcfce7' : '#fee2e2';
+        detailHtml += `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;margin:4px 0;border-radius:8px;background:${statusBg};">
+            <span>${statusIcon}</span>
+            <span style="color:${statusColor};font-size:13px;font-weight:500;">测试点 ${r.index}：${statusText}</span>
+        </div>`;
+    });
+    detailHtml += '</div>';
+    
+    return `
+    <div style="display:flex;align-items:center;justify-content:center;min-height:160px;padding:24px;">
+        <div style="background:${bgGradient};border:2px solid ${borderColor};border-radius:16px;padding:32px 40px;text-align:center;max-width:520px;width:100%;box-shadow:0 4px 16px rgba(0,0,0,0.06);">
+            <div style="width:64px;height:64px;border-radius:50%;background:${iconBg};display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:32px;">${icon}</div>
+            <div style="font-size:22px;font-weight:700;color:${titleColor};margin-bottom:8px;">${title}</div>
+            ${detailHtml}
+        </div>
+    </div>`;
 }
 
 function initMermaid() {
@@ -170,9 +506,19 @@ async function renderMermaidDiagrams(container) {
             const { svg } = await mermaid.render(id, code);
             mermaidDiv.innerHTML = svg;
         } catch (error) {
-            console.error('Mermaid 渲染错误:', error);
-            mermaidDiv.innerHTML = `<p style="color: #e74c3c; margin-bottom: 10px;">⚠️ 图表渲染失败</p>`;
-            mermaidDiv.innerHTML += `<pre style="text-align: left; background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto;"><code>${code}</code></pre>`;
+            console.warn('Mermaid 首次渲染失败，尝试激进清理后重试:', error.message || error);
+            cleanupMermaidErrors();
+            // 重试：更激进地清理特殊字符
+            try {
+                let retryCode = aggressiveMermaidSanitize(code);
+                const retryId = `mermaid-retry-${Date.now()}-${i}-${mermaidRenderCounter++}`;
+                const { svg } = await mermaid.render(retryId, retryCode);
+                mermaidDiv.innerHTML = svg;
+            } catch (retryError) {
+                console.error('Mermaid 重试渲染也失败:', retryError);
+                mermaidDiv.innerHTML = `<p style="color: #e74c3c; margin-bottom: 10px;">⚠️ 图表渲染失败</p>`;
+                mermaidDiv.innerHTML += `<pre style="text-align: left; background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto;"><code>${code}</code></pre>`;
+            }
         } finally {
             cleanupMermaidErrors();
         }
@@ -206,8 +552,17 @@ async function renderMermaidDiagrams(container) {
             const { svg } = await mermaid.render(id, code);
             mermaidContainer.innerHTML = svg;
         } catch (error) {
-            console.error('Mermaid 渲染错误:', error);
-            mermaidContainer.innerHTML = `<span style="color: #64748b;">📊 图表加载失败</span>`;
+            console.warn('Mermaid div 首次渲染失败，尝试重试:', error.message || error);
+            cleanupMermaidErrors();
+            try {
+                let retryCode = aggressiveMermaidSanitize(code);
+                const retryId = `mermaid-div-retry-${Date.now()}-${i}-${mermaidRenderCounter++}`;
+                const { svg } = await mermaid.render(retryId, retryCode);
+                mermaidContainer.innerHTML = svg;
+            } catch (retryError) {
+                console.error('Mermaid div 重试也失败:', retryError);
+                mermaidContainer.innerHTML = `<span style="color: #64748b;">📊 图表加载失败</span>`;
+            }
         } finally {
             cleanupMermaidErrors();
         }
@@ -222,213 +577,107 @@ function preprocessMermaidCode(code) {
     let processed = code.trim();
     
     // 【关键修复】先将单行代码格式化为多行
-    // 检测是否是单行格式（包含多个节点定义但没有换行）
-    // 在箭头 --> 前添加换行，但保留第一行的 flowchart/graph 声明
     if (processed.split('\n').length <= 2) {
-        // 可能是单行格式，尝试格式化
-        // 1. 在 --> 前添加换行（但不是第一个）
         let firstArrowFound = false;
         processed = processed.replace(/\s+(--[->])/g, (match, arrow) => {
             if (!firstArrowFound) {
                 firstArrowFound = true;
-                return ' ' + arrow; // 第一个箭头保持在同一行
+                return ' ' + arrow;
             }
             return '\n    ' + arrow;
         });
         
-        // 2. 如果还是单行，尝试在节点ID前添加换行
-        // 匹配模式：空格+大写字母+[或{（节点定义开始）
         if (processed.split('\n').length <= 2) {
             processed = processed.replace(/\s+([A-Z])\[/g, '\n    $1[');
             processed = processed.replace(/\s+([A-Z])\{/g, '\n    $1{');
         }
     }
     
-    // 【最先处理】将节点文本中的英文括号替换为中文括号
-    // 必须在 fixUnclosedBrackets 之前执行，因为英文括号 ( ) 会被 Mermaid 解析为节点形状定义符
-    // 导致后续的括号匹配逻辑出错
-    processed = fixParenthesesInNodes(processed);
+    // 移除可能导致问题的特殊字符（中文引号等）
+    processed = processed.replace(/[""'']/g, '');
     
-    // 【重要】修复未闭合的括号 - 使用更智能的方式
-    // 先处理整个代码中未闭合的节点定义
-    processed = fixUnclosedBrackets(processed);
+    // 【核心修复】使用 Mermaid 的双引号语法 ["..."] 包裹节点文本
+    // 这是 Mermaid 官方支持的转义方式，可以安全处理所有特殊字符
+    processed = wrapNodeTextWithQuotes(processed);
     
-    // 【重要】逐行处理，修复剩余的未闭合括号
+    // 修复未闭合的箭头标签 |xxx 但没有 |
     let lines = processed.split('\n');
     lines = lines.map(line => {
-        // 跳过空行和注释
-        if (!line.trim() || line.trim().startsWith('%%')) {
-            return line;
-        }
-        
-        // 修复未闭合的方括号节点 [xxx 但没有 ]
-        let openBrackets = (line.match(/\[/g) || []).length;
-        let closeBrackets = (line.match(/\]/g) || []).length;
-        if (openBrackets > closeBrackets) {
-            for (let i = 0; i < openBrackets - closeBrackets; i++) {
-                line = line + ']';
-            }
-        }
-        
-        // 修复未闭合的菱形节点 {xxx 或 {{xxx 但没有 } 或 }}
-        let openBraces = (line.match(/\{/g) || []).length;
-        let closeBraces = (line.match(/\}/g) || []).length;
-        if (openBraces > closeBraces) {
-            for (let i = 0; i < openBraces - closeBraces; i++) {
-                line = line + '}';
-            }
-        }
-        
-        // 修复未闭合的箭头标签 |xxx 但没有 |
+        if (!line.trim() || line.trim().startsWith('%%')) return line;
         let pipeCount = (line.match(/\|/g) || []).length;
         if (pipeCount % 2 === 1) {
             line = line + '|';
         }
-        
         return line;
     });
     processed = lines.join('\n');
     
-    // 移除节点文本中的双引号和单引号
-    processed = processed.replace(/\[([^\]]*)"([^\]"]*)"\s*\]/g, '[$1$2]');
-    processed = processed.replace(/\[([^\]]*)'([^\]']*)'\s*\]/g, '[$1$2]');
-    processed = processed.replace(/\{\{([^\}]*)"([^\}"]*)"([^\}]*)\}\}/g, '{{$1$2$3}}');
-    processed = processed.replace(/\{\{([^\}]*)'([^\}']*)'([^\}]*)\}\}/g, '{{$1$2$3}}');
-    
-    // 修复箭头标签中的引号
-    processed = processed.replace(/\|([^|]*)"([^|"]*)"\s*\|/g, '|$1$2|');
-    processed = processed.replace(/\|([^|]*)'([^|']*)'\s*\|/g, '|$1$2|');
-    
-    // 移除可能导致问题的特殊字符（中文引号等）
-    processed = processed.replace(/[""'']/g, '');
-    
-    // 【重要】处理节点文本中的问号 - 移除
-    processed = processed.replace(/\[([^\]]*)\?\s*\]/g, '[$1]');
-    processed = processed.replace(/\{\{([^\}]*)\?\s*\}\}/g, '{{$1}}');
-    processed = processed.replace(/\{([^\{\}]*)\?\s*\}/g, '{$1}');
-    
-    // 处理箭头标签中的特殊字符（英文括号替换为中文括号）
-    processed = processed.replace(/\|([^|]*)\(\s*\|/g, '|$1（|');
-    processed = processed.replace(/\|([^|]*)\)\s*\|/g, '|$1）|');
-    processed = processed.replace(/\|\s*\(([^|]*)\|/g, '|（$1|');
-    processed = processed.replace(/\|\s*\)([^|]*)\|/g, '|）$1|');
-    
-    // 移除箭头标签中可能残留的括号和问号
-    // 使用[^|\n]避免跨行匹配破坏节点定义
-    processed = processed.replace(/\|([^|\n]*)[()?\[\]{}]+([^|\n]*)\|/g, '|$1$2|');
-    
     return processed;
 }
 
-// 修复未闭合的括号 - 智能处理整个代码
-function fixUnclosedBrackets(code) {
-    let result = '';
-    let i = 0;
-    
-    while (i < code.length) {
-        const char = code[i];
-        
-        if (char === '[') {
-            // 找到方括号开始，寻找对应的闭合
-            let content = '[';
-            let depth = 1;
-            i++;
-            
-            while (i < code.length && depth > 0) {
-                const c = code[i];
-                if (c === '[') {
-                    depth++;
-                } else if (c === ']') {
-                    depth--;
-                } else if (c === '\n' || (c === ' ' && i + 1 < code.length && /[A-Z]/.test(code[i + 1]))) {
-                    // 遇到换行或下一个节点定义，说明当前括号未闭合
-                    break;
-                } else if (c === '-' && i + 1 < code.length && code[i + 1] === '-') {
-                    // 遇到箭头，说明当前括号未闭合
-                    break;
-                }
-                content += c;
-                i++;
-            }
-            
-            // 如果depth > 0，说明未闭合，添加闭合括号
-            while (depth > 0) {
-                content += ']';
-                depth--;
-            }
-            result += content;
-        } else if (char === '{') {
-            // 找到花括号开始，寻找对应的闭合
-            let content = '{';
-            let depth = 1;
-            i++;
-            
-            while (i < code.length && depth > 0) {
-                const c = code[i];
-                if (c === '{') {
-                    depth++;
-                } else if (c === '}') {
-                    depth--;
-                } else if (c === '\n' || (c === ' ' && i + 1 < code.length && /[A-Z]/.test(code[i + 1]))) {
-                    // 遇到换行或下一个节点定义，说明当前括号未闭合
-                    break;
-                } else if (c === '-' && i + 1 < code.length && code[i + 1] === '-') {
-                    // 遇到箭头，说明当前括号未闭合
-                    break;
-                }
-                content += c;
-                i++;
-            }
-            
-            // 如果depth > 0，说明未闭合，添加闭合括号
-            while (depth > 0) {
-                content += '}';
-                depth--;
-            }
-            result += content;
-        } else {
-            result += char;
-            i++;
-        }
-    }
-    
-    return result;
-}
-
-
-// 修复节点文本中的英文括号 - 逐行智能处理所有节点类型
-// 覆盖方括号节点 [...]、菱形节点 {...}、双花括号节点 {{...}}
-function fixParenthesesInNodes(code) {
+// 使用 Mermaid 双引号语法包裹节点文本，安全处理所有特殊字符
+// 将 A[text] 转为 A["text"]，将 B{text} 转为 B{"text"}，将 C{{text}} 转为 C{{"text"}}
+// 同时处理箭头标签 |text| 中的特殊字符
+function wrapNodeTextWithQuotes(code) {
     let lines = code.split('\n');
     lines = lines.map(line => {
-        // 跳过空行、注释、flowchart/graph声明行
-        if (!line.trim() || line.trim().startsWith('%%') || /^\s*(flowchart|graph)\s/i.test(line.trim())) {
+        let trimmed = line.trim();
+        // 跳过空行、注释、声明行、end、subgraph、style/classDef 行
+        if (!trimmed || trimmed.startsWith('%%') || 
+            /^\s*(flowchart|graph)\s/i.test(trimmed) ||
+            trimmed === 'end' ||
+            /^\s*style\s/i.test(trimmed) ||
+            /^\s*classDef\s/i.test(trimmed) ||
+            /^\s*class\s/i.test(trimmed)) {
             return line;
         }
-
-        // 智能处理方括号节点：找到 节点ID[ 开头，然后向后扫描找到正确的闭合 ]
-        // 这样可以处理节点文本中包含 [ ] 的情况（如 nums[i]）
-        line = fixBracketNodeContent(line);
         
-        // 替换双花括号节点 {{...}} 中的特殊字符
-        line = line.replace(/\{\{([^}]*)\}\}/g, (match, content) => {
-            let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
-            fixed = fixed.replace(/\[/g, '【').replace(/\]/g, '】');
-            return '{{' + fixed + '}}';
+        // 处理 subgraph 行 - subgraph 名称不需要引号包裹（Mermaid 原生支持中文 subgraph 名称）
+        if (/^\s*subgraph\s/.test(line)) {
+            return line;
+        }
+        
+        // 处理箭头标签 |text| 中的特殊字符 - 替换为安全字符
+        line = line.replace(/\|([^|]+)\|/g, (match, content) => {
+            let safe = content;
+            safe = safe.replace(/\(/g, '（').replace(/\)/g, '）');
+            safe = safe.replace(/\[/g, '【').replace(/\]/g, '】');
+            safe = safe.replace(/\{/g, '｛').replace(/\}/g, '｝');
+            safe = safe.replace(/"/g, '').replace(/'/g, '');
+            safe = safe.replace(/\?/g, '');
+            return '|' + safe + '|';
         });
         
-        // 替换菱形节点 {...} 中的特殊字符
-        line = line.replace(/(\w)\{([^{}]*)\}/g, (match, prefix, content) => {
-            let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
-            fixed = fixed.replace(/\[/g, '【').replace(/\]/g, '】');
-            return prefix + '{' + fixed + '}';
+        // 处理方括号节点 ID[text] → ID["text"]（已经是 ["..."] 的跳过）
+        line = wrapBracketNodes(line);
+        
+        // 处理双花括号菱形节点 ID{{text}} → ID{{"text"}}
+        line = line.replace(/(\w)\{\{([^}]*)\}\}/g, (match, prefix, content) => {
+            if (content.startsWith('"') && content.endsWith('"')) return match;
+            let safe = sanitizeNodeText(content);
+            return prefix + '{{"' + safe + '"}}';
         });
         
-        // 替换箭头标签 |...| 中的特殊字符
-        line = line.replace(/\|([^|]*)\|/g, (match, content) => {
-            let fixed = content.replace(/\(/g, '（').replace(/\)/g, '）');
-            fixed = fixed.replace(/\[/g, '【').replace(/\]/g, '】');
-            return '|' + fixed + '|';
+        // 处理单花括号菱形节点 ID{text} → ID{"text"}（排除已处理的双花括号）
+        line = line.replace(/(\w)\{([^{}]*)\}(?!\})/g, (match, prefix, content) => {
+            if (content.startsWith('"') && content.endsWith('"')) return match;
+            let safe = sanitizeNodeText(content);
+            return prefix + '{"' + safe + '"}';
+        });
+        
+        // 处理圆括号节点 ID(text) → ID("text")
+        line = line.replace(/(\w)\(([^()]*)\)(?!\))/g, (match, prefix, content) => {
+            if (content.startsWith('"') && content.endsWith('"')) return match;
+            // 排除箭头标签中的内容（不应该出现在这里，但以防万一）
+            let safe = sanitizeNodeText(content);
+            return prefix + '("' + safe + '")';
+        });
+        
+        // 处理双圆括号节点 ID((text)) → ID(("text"))
+        line = line.replace(/(\w)\(\(([^()]*)\)\)/g, (match, prefix, content) => {
+            if (content.startsWith('"') && content.endsWith('"')) return match;
+            let safe = sanitizeNodeText(content);
+            return prefix + '(("' + safe + '"))';
         });
         
         return line;
@@ -436,46 +685,76 @@ function fixParenthesesInNodes(code) {
     return lines.join('\n');
 }
 
-// 智能处理方括号节点内容：扫描找到节点ID[...] 并替换内部的特殊字符
-function fixBracketNodeContent(line) {
-    // 匹配节点ID后跟 [ 的位置（节点ID通常是字母/数字/下划线）
+// 清理节点文本中的危险字符（用于双引号包裹内的文本）
+function sanitizeNodeText(text) {
+    let safe = text.trim();
+    // 移除已有的引号（双引号在 ["..."] 内会破坏语法）
+    safe = safe.replace(/"/g, '').replace(/'/g, '');
+    // 替换方括号为中文方括号（] 在 ["..."] 内可能被误判为闭合符）
+    safe = safe.replace(/\[/g, '【').replace(/\]/g, '】');
+    // 替换圆括号为中文圆括号（() 是 Mermaid 节点形状分隔符，在文本中会导致解析错误）
+    safe = safe.replace(/\(/g, '（').replace(/\)/g, '）');
+    // 替换花括号为中文花括号（{} 是 Mermaid 菱形节点分隔符）
+    safe = safe.replace(/\{/g, '｛').replace(/\}/g, '｝');
+    // 移除问号（Mermaid 中可能导致问题）
+    safe = safe.replace(/\?/g, '');
+    return safe;
+}
+
+// 智能处理方括号节点：扫描行，找到 ID[...] 并包裹为 ID["..."]
+function wrapBracketNodes(line) {
     let result = '';
     let i = 0;
     while (i < line.length) {
-        // 检测是否是节点定义的开始：字母/数字后跟 [
-        // 但排除箭头标签 |...|  中的内容
         if (line[i] === '[') {
-            // 向前检查是否有节点ID（字母/数字/下划线）
+            // 检查前面是否有节点ID
             let hasNodeId = i > 0 && /[\w]/.test(line[i - 1]);
-            // 也可能是行首缩进后直接 ID[
             if (!hasNodeId && i > 0) {
-                // 检查前面是否是空格+节点ID
                 let j = i - 1;
                 while (j >= 0 && /[\w]/.test(line[j])) j--;
-                hasNodeId = j < i - 1; // 至少有一个字母/数字
+                hasNodeId = j < i - 1;
             }
 
             if (hasNodeId) {
-                // 这是一个节点定义 [...], 找到最后一个 ] 作为闭合
-                // 从当前位置向后找最后一个 ] （贪婪匹配到行尾方向最后的 ]）
+                // 找到最后一个 ] 作为闭合（在箭头或管道符之前）
                 let lastBracket = -1;
+                let depth = 0;
                 for (let k = i + 1; k < line.length; k++) {
-                    if (line[k] === ']') lastBracket = k;
-                    // 遇到箭头 --> 或 --- 就停止搜索
+                    if (line[k] === '[') depth++;
+                    if (line[k] === ']') {
+                        if (depth > 0) { depth--; } 
+                        else { lastBracket = k; }
+                    }
                     if (line[k] === '-' && k + 1 < line.length && line[k + 1] === '-') break;
-                    // 遇到管道符 | 也停止
                     if (line[k] === '|') break;
                 }
-
-                if (lastBracket > i) {
-                    // 提取节点内容并替换特殊字符
-                    let content = line.substring(i + 1, lastBracket);
-                    content = content.replace(/\(/g, '（').replace(/\)/g, '）');
-                    content = content.replace(/\[/g, '【').replace(/\]/g, '】');
-                    result += '[' + content + ']';
-                    i = lastBracket + 1;
+                
+                // 如果没找到闭合括号，尝试找行尾最后一个 ]
+                if (lastBracket === -1) {
+                    for (let k = line.length - 1; k > i; k--) {
+                        if (line[k] === ']') { lastBracket = k; break; }
+                    }
+                }
+                
+                // 如果还是没找到，添加闭合括号
+                if (lastBracket === -1) {
+                    let content = line.substring(i + 1);
+                    let safe = sanitizeNodeText(content);
+                    result += '["' + safe + '"]';
+                    i = line.length;
                     continue;
                 }
+
+                let content = line.substring(i + 1, lastBracket);
+                // 如果已经是 ["..."] 格式，跳过
+                if (content.startsWith('"') && content.endsWith('"')) {
+                    result += '[' + content + ']';
+                } else {
+                    let safe = sanitizeNodeText(content);
+                    result += '["' + safe + '"]';
+                }
+                i = lastBracket + 1;
+                continue;
             }
         }
         result += line[i];
@@ -484,6 +763,48 @@ function fixBracketNodeContent(line) {
     return result;
 }
 
+// fixUnclosedBrackets 和 fixParenthesesInNodes 已被 wrapNodeTextWithQuotes 替代
+
+// 激进清理 Mermaid 代码 - 当首次渲染失败时使用
+// 移除所有可能导致问题的特殊字符，只保留纯文本
+function aggressiveMermaidSanitize(code) {
+    let lines = code.split('\n');
+    lines = lines.map(line => {
+        let trimmed = line.trim();
+        // 跳过声明行、空行、end、subgraph、style 等
+        if (!trimmed || trimmed.startsWith('%%') || 
+            /^\s*(flowchart|graph|stateDiagram|sequenceDiagram)\s/i.test(trimmed) ||
+            trimmed === 'end' ||
+            /^\s*(style|classDef|class|subgraph)\s/i.test(trimmed)) {
+            return line;
+        }
+        
+        // 对节点文本内容做激进清理：移除所有括号、逗号、特殊符号
+        // 处理 ["..."] 格式
+        line = line.replace(/\["([^"]*)"\]/g, (match, content) => {
+            let safe = content.replace(/[()（）\[\]【】{}\{\}｛｝<>,，;；:：!！\?？#@$%^&*+=~`|\\\/]/g, ' ').replace(/\s+/g, ' ').trim();
+            return '["' + safe + '"]';
+        });
+        // 处理 {{"..."}} 格式
+        line = line.replace(/\{\{"([^"]*)"\}\}/g, (match, content) => {
+            let safe = content.replace(/[()（）\[\]【】{}\{\}｛｝<>,，;；:：!！\?？#@$%^&*+=~`|\\\/]/g, ' ').replace(/\s+/g, ' ').trim();
+            return '{{"' + safe + '"}}';
+        });
+        // 处理 {"..."} 格式
+        line = line.replace(/\{"([^"]*)"\}/g, (match, content) => {
+            let safe = content.replace(/[()（）\[\]【】{}\{\}｛｝<>,，;；:：!！\?？#@$%^&*+=~`|\\\/]/g, ' ').replace(/\s+/g, ' ').trim();
+            return '{"' + safe + '"}';
+        });
+        // 处理箭头标签
+        line = line.replace(/\|([^|]+)\|/g, (match, content) => {
+            let safe = content.replace(/[()（）\[\]【】{}\{\}｛｝<>,，;；\?？]/g, ' ').replace(/\s+/g, ' ').trim();
+            return '|' + safe + '|';
+        });
+        
+        return line;
+    });
+    return lines.join('\n');
+}
 
 // ==================== 知识点选择 ====================
 
@@ -494,6 +815,11 @@ async function selectKnowledge(point, btn) {
     // 选中当前
     btn.classList.add('selected');
     selectedTopic = point;
+    
+    // 退出作业模式
+    homeworkMode = false;
+    currentHomeworkId = '';
+    currentHomeworkProblemIdx = 0;
     
     // 初始化会话并进入练习页面
     try {
@@ -521,11 +847,33 @@ function enterPracticePage() {
     document.getElementById('selection-page').classList.add('hidden');
     document.getElementById('practice-page').classList.add('active');
     
+    // 恢复难度选择器为知识点模式
+    restoreKnowledgeDifficultySelector();
+    
     // 初始化Monaco编辑器
     initMonacoEditor();
     
     // 生成第一道题目
     generateProblem();
+}
+
+// 恢复知识点模式的难度选择器
+function restoreKnowledgeDifficultySelector() {
+    const selector = document.getElementById('difficulty-selector');
+    if (!selector) return;
+    
+    selector.innerHTML = '';
+    ['简单', '中等', '困难'].forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.textContent = d;
+        selector.appendChild(opt);
+    });
+    selector.value = currentDifficulty;
+    selector.className = 'difficulty-selector ' + currentDifficulty;
+    selector.onchange = function() {
+        onDifficultyChange(this.value);
+    };
 }
 
 // ==================== Monaco编辑器 ====================
@@ -1505,16 +1853,34 @@ function wrapHeaderSection(header, sectionClass, titleIcon) {
 async function getCorrectAnswerToFloating() {
     const display = getFloatingPanelContent();
     if (!display) return;
-    display.innerHTML = '<p class="loading">正在获取正确答案...</p>';
     
     // 记录本次请求对应的面板ID
     const targetPanelId = currentPanelId;
     
-    // 初始化缓冲区
-    panelStreamBuffers.set(targetPanelId, { fullText: '', type: '正确答案', completed: false });
-    
     // 设置当前辅导类型（用于追问）
     currentGuidanceType = '正确答案';
+    
+    // 作业模式：直接从本地数据显示参考答案，不调用AI
+    if (homeworkMode && currentHomeworkId && HOMEWORK_DATA[currentHomeworkId]) {
+        const hwData = HOMEWORK_DATA[currentHomeworkId];
+        const problem = hwData.problems[currentHomeworkProblemIdx];
+        if (problem && problem.referenceAnswer) {
+            const fullText = '## ✅ 参考答案\n\n' + problem.referenceAnswer;
+            panelStreamBuffers.set(targetPanelId, { fullText: fullText, type: '正确答案', completed: true });
+            display.innerHTML = renderMarkdown(fullText);
+            highlightCode(display);
+            addAnswerCopyButton(display, fullText);
+            showFollowUpInput(display);
+            saveCurrentPanelState();
+            return;
+        }
+    }
+    
+    // 非作业模式：走原有AI生成逻辑
+    display.innerHTML = '<p class="loading">正在获取正确答案...</p>';
+    
+    // 初始化缓冲区
+    panelStreamBuffers.set(targetPanelId, { fullText: '', type: '正确答案', completed: false });
     
     // 获取目标面板的内容元素
     const getTargetDisplay = () => {
@@ -2246,6 +2612,11 @@ async function streamResponse(response, display) {
 // ==================== 代码提交 ====================
 
 async function submitCode() {
+    // 作业模式使用测试用例判定
+    if (homeworkMode) {
+        return submitCodeHomework();
+    }
+    
     const code = getEditorCode().trim();
     if (!code || code === getDefaultCode('c').trim() || code === getDefaultCode('python').trim()) {
         alert('请先编写代码！');
@@ -4334,6 +4705,9 @@ enterPracticePage = function() {
     document.body.classList.add('practice-mode');
     document.getElementById('selection-page').classList.add('hidden');
     document.getElementById('practice-page').classList.add('active');
+    
+    // 恢复难度选择器为知识点模式
+    restoreKnowledgeDifficultySelector();
     
     // 初始化分割线
     initResizers();

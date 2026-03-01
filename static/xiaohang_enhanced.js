@@ -21,6 +21,18 @@ function preprocessMermaidCode(code) {
     // 3. 移除可能导致问题的特殊字符
     processed = processed.replace(/[""'']/g, '');
     
+    // 4. 替换节点文本中的圆括号为全角（防止 min()/max() 等被 Mermaid 误解析为节点形状）
+    // 处理 [文本] 中的圆括号
+    processed = processed.replace(/\[([^\]]*)\]/g, (match, content) => {
+        let safe = content.replace(/\(/g, '（').replace(/\)/g, '）');
+        return '[' + safe + ']';
+    });
+    // 处理 {文本} 中的圆括号
+    processed = processed.replace(/\{([^{}]*)\}/g, (match, content) => {
+        let safe = content.replace(/\(/g, '（').replace(/\)/g, '）');
+        return '{' + safe + '}';
+    });
+    
     return processed;
 }
 

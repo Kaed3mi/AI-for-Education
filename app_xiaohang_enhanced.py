@@ -14,6 +14,7 @@ from models import save_answer_record
 import json
 import uuid
 import time
+import os
 
 # 创建Blueprint
 xiaohang_enhanced_bp = Blueprint('xiaohang_enhanced', __name__, url_prefix='/api/xiaohang')
@@ -99,6 +100,27 @@ def clear_all_guidance_outputs(session_id):
     # 同时清理叶子节点缓存
     leaf_key = f"xiaohang_framework_leaves:{session_id}"
     redis_client.delete(leaf_key)
+    # 同时清理追问历史
+    for guidance_type in GUIDANCE_DEPENDENCIES.keys():
+        chat_key = f"xiaohang_guidance_chat:{session_id}:{guidance_type}"
+        redis_client.delete(chat_key)
+    # 清理右侧模块缓存（代码诊断结果、提示历史）
+    diagnosis_key = f"xiaohang_diagnosis:{session_id}"
+    redis_client.delete(diagnosis_key)
+    hint_history_key = f"xiaohang_hint_history:{session_id}"
+    redis_client.delete(hint_history_key)
+    # 递增 generation token，使正在运行的 pregenerate_all 失效
+    gen_token_key = f"xiaohang_gen_token:{session_id}"
+    redis_client.incr(gen_token_key)
+    redis_client.expire(gen_token_key, 3600)
+
+
+def get_generation_token(session_id):
+    """获取当前 generation token"""
+    redis_client = get_redis_client()
+    gen_token_key = f"xiaohang_gen_token:{session_id}"
+    val = redis_client.get(gen_token_key)
+    return int(val) if val else 0
 
 
 def extract_leaf_nodes_from_framework(framework_text):
@@ -591,6 +613,9 @@ def get_guidance():
     
     def generate_response():
         try:
+            # 记录当前 generation token
+            gen_token_at_start = get_generation_token(session_id)
+            
             # 使用 config.py 中的 ISPO 结构化提示词
             language = session.get('xiaohang_language', 'C')
             system_prompts = get_system_prompts(language)
@@ -761,7 +786,9 @@ def get_guidance():
                 yield content_piece
             
             # 保存本模块的输出（供后续模块使用）
-            save_guidance_output(session_id, guidance_type, full_response)
+            # 检查题目是否已切换，避免将旧题目的输出写入新题目的缓存
+            if get_generation_token(session_id) == gen_token_at_start:
+                save_guidance_output(session_id, guidance_type, full_response)
             
             # 存储本次对话到Redis（用于追问）
             redis_client.rpush(
@@ -802,6 +829,9 @@ def pregenerate_all():
     
     def generate_all():
         try:
+            # 记录当前 generation token，用于检测题目是否已切换
+            gen_token_at_start = get_generation_token(session_id)
+            
             llm = get_llm(session.get('xiaohang_model', 'xhang'))
             system_prompts_map = get_system_prompts(language)
             lang_code_block = 'c' if language == 'C' else 'python'
@@ -811,6 +841,10 @@ def pregenerate_all():
             max_wait = 60
             waited = 0
             while waited < max_wait:
+                # 检查题目是否已切换
+                if get_generation_token(session_id) != gen_token_at_start:
+                    yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
+                    return
                 problem_data_check = redis_client.get(problem_key)
                 if problem_data_check:
                     info_check = json.loads(problem_data_check.decode('utf-8'))
@@ -831,6 +865,10 @@ def pregenerate_all():
             max_wait_thought = 120
             waited_t = 0
             while waited_t < max_wait_thought:
+                # 检查题目是否已切换
+                if get_generation_token(session_id) != gen_token_at_start:
+                    yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
+                    return
                 thought_data = redis_client.get(thought_key)
                 if thought_data:
                     thought_output = thought_data.decode('utf-8')
@@ -916,6 +954,12 @@ def pregenerate_all():
             framework_output = ""
             for piece in llm._call(framework_prompt):
                 framework_output += piece
+            
+            # 检查题目是否已切换
+            if get_generation_token(session_id) != gen_token_at_start:
+                yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
+                return
+            
             save_guidance_output(session_id, '框架', framework_output)
             
             # 提取框架的叶子节点并保存，供伪代码和代码补全使用
@@ -969,6 +1013,12 @@ def pregenerate_all():
             pseudo_output = ""
             for piece in llm._call(pseudo_prompt):
                 pseudo_output += piece
+            
+            # 检查题目是否已切换
+            if get_generation_token(session_id) != gen_token_at_start:
+                yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
+                return
+            
             save_guidance_output(session_id, '伪代码', pseudo_output)
             
             yield json.dumps({"status": "done", "module": "伪代码"}) + "\n"
@@ -1006,6 +1056,12 @@ def pregenerate_all():
             core_output = ""
             for piece in llm._call(core_prompt):
                 core_output += piece
+            
+            # 检查题目是否已切换
+            if get_generation_token(session_id) != gen_token_at_start:
+                yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
+                return
+            
             save_guidance_output(session_id, '核心语句', core_output)
             
             yield json.dumps({"status": "done", "module": "核心语句"}) + "\n"
@@ -2567,3 +2623,218 @@ def code_review():
             yield f"错误: {str(e)}"
     
     return Response(stream_with_context(generate_response()), mimetype='text/event-stream')
+
+
+# ==================== 作业模式 - 测试用例判定 ====================
+
+@xiaohang_enhanced_bp.route('/init_homework_session', methods=['POST'])
+def init_homework_session():
+    """初始化作业模式会话"""
+    data = request.json
+    homework_id = data.get('homework_id', '')  # e.g. "第一次作业"
+    
+    if not homework_id:
+        return jsonify({"error": "请选择作业"}), 400
+    
+    session_id = str(uuid.uuid4())
+    session['xiaohang_session_id'] = session_id
+    session['xiaohang_topics'] = []
+    session['xiaohang_difficulty'] = '简单'
+    session['xiaohang_correct_count'] = 0
+    session['xiaohang_model'] = 'loopcoder'
+    session['xiaohang_language'] = 'C'
+    session['xiaohang_mode'] = 'homework'  # 标记为作业模式
+    session['xiaohang_homework_id'] = homework_id
+    
+    return jsonify({
+        "message": "作业会话初始化成功",
+        "session_id": session_id,
+        "homework_id": homework_id
+    })
+
+
+@xiaohang_enhanced_bp.route('/switch_homework_problem', methods=['POST'])
+def switch_homework_problem():
+    """切换作业题目 - 轻量级：只清缓存+存题目，不生成标准答案（标准答案按需生成）"""
+    session_id = session.get('xiaohang_session_id')
+    if not session_id:
+        return jsonify({"error": "会话未初始化"}), 400
+
+    data = request.get_json()
+    problem_text = (data.get('problem_text') or '').strip()
+    if not problem_text:
+        return jsonify({"error": "题目内容不能为空"}), 400
+
+    redis_client = get_redis_client()
+    problem_key = f"xiaohang_problem:{session_id}"
+
+    # 1. 清理所有模块输出 + 递增 generation token（使正在运行的 pregenerate 失效）
+    clear_all_guidance_outputs(session_id)
+
+    # 2. 存储新题目（标准答案为空，后续按需生成）
+    topics = session.get('xiaohang_topics', [])
+    redis_client.setex(
+        problem_key,
+        3600,
+        json.dumps({
+            "problem": problem_text,
+            "standard_answer": "",
+            "difficulty": session.get('xiaohang_difficulty', '简单'),
+            "topics": topics,
+            "timestamp": time.time()
+        })
+    )
+
+    return jsonify({"message": "题目已切换", "problem_text": problem_text})
+
+
+@xiaohang_enhanced_bp.route('/submit_code_homework', methods=['POST'])
+def submit_code_homework():
+    """作业模式提交代码 - 使用测试用例判定（本地gcc编译运行）"""
+    import subprocess, tempfile, uuid
+    
+    session_id = session.get('xiaohang_session_id')
+    if not session_id:
+        return jsonify({"result": "error", "message": "会话未初始化"}), 400
+    
+    data = request.json
+    user_code = data.get('code', '')
+    test_cases = data.get('test_cases', [])
+    language = session.get('xiaohang_language', 'C')
+    
+    if not user_code.strip():
+        return jsonify({"result": "error", "message": "代码不能为空"}), 400
+    
+    if not test_cases:
+        return jsonify({"result": "error", "message": "没有测试用例"}), 400
+    
+    results = []
+    passed = 0
+    total = len(test_cases)
+    
+    # 创建临时目录用于编译
+    tmp_dir = tempfile.mkdtemp(prefix='homework_')
+    unique_id = uuid.uuid4().hex[:8]
+    src_file = os.path.join(tmp_dir, f'solution_{unique_id}.c')
+    exe_file = os.path.join(tmp_dir, f'solution_{unique_id}')
+    
+    try:
+        # 写入源代码文件 —— 自动修复 void main() 问题
+        # void main() 在 Linux gcc 下会导致退出码不为0，被误判为运行时错误
+        fixed_code = user_code
+        import re
+        fixed_code = re.sub(r'\bvoid\s+main\s*\(', 'int main(', fixed_code)
+        # 如果用了 main() 但没有 return 语句，gcc 会自动补 return 0（C99+），
+        # 但为了兼容旧标准，编译时加 -std=c99
+        with open(src_file, 'w', encoding='utf-8') as f:
+            f.write(fixed_code)
+        
+        if language == 'C':
+            # 编译（加 -std=c99 确保 main 末尾隐式 return 0）
+            compile_proc = subprocess.run(
+                ['gcc', src_file, '-o', exe_file, '-lm', '-std=c99'],
+                capture_output=True, text=True, timeout=15
+            )
+            if compile_proc.returncode != 0:
+                # 编译失败，所有测试点都标记为编译错误
+                print(f"[Homework] 编译失败: {compile_proc.stderr[:500]}")
+                for i in range(total):
+                    results.append({'index': i + 1, 'passed': False, 'reason': '编译错误'})
+                return jsonify({"passed": 0, "total": total, "all_passed": False, "results": results})
+            
+            # 逐个测试点运行
+            for i, tc in enumerate(test_cases):
+                tc_input = tc.get('input', '')
+                tc_expected = tc.get('expected_output', '').strip()
+                try:
+                    run_proc = subprocess.run(
+                        [exe_file],
+                        input=tc_input, capture_output=True, text=True, timeout=10
+                    )
+                    if run_proc.returncode != 0:
+                        print(f"[Homework] 测试点{i+1} 运行时错误: {run_proc.stderr[:200]}")
+                        results.append({'index': i + 1, 'passed': False, 'reason': '运行时错误'})
+                        continue
+                    actual_output = run_proc.stdout.strip()
+                    if actual_output == tc_expected:
+                        passed += 1
+                        results.append({'index': i + 1, 'passed': True})
+                    else:
+                        print(f"[Homework] 测试点{i+1} 不匹配: expected={repr(tc_expected)}, actual={repr(actual_output)}")
+                        results.append({'index': i + 1, 'passed': False, 'reason': '答案错误'})
+                except subprocess.TimeoutExpired:
+                    results.append({'index': i + 1, 'passed': False, 'reason': '超时'})
+                except Exception as e:
+                    print(f"[Homework] 测试点{i+1}执行异常: {e}")
+                    results.append({'index': i + 1, 'passed': False, 'reason': '系统错误'})
+        
+        elif language == 'Python':
+            # Python 直接运行，不需要编译
+            for i, tc in enumerate(test_cases):
+                tc_input = tc.get('input', '')
+                tc_expected = tc.get('expected_output', '').strip()
+                try:
+                    run_proc = subprocess.run(
+                        ['python3', src_file],
+                        input=tc_input, capture_output=True, text=True, timeout=10
+                    )
+                    if run_proc.returncode != 0:
+                        print(f"[Homework] 测试点{i+1} 运行错误: {run_proc.stderr[:200]}")
+                        results.append({'index': i + 1, 'passed': False, 'reason': '运行时错误'})
+                        continue
+                    actual_output = run_proc.stdout.strip()
+                    if actual_output == tc_expected:
+                        passed += 1
+                        results.append({'index': i + 1, 'passed': True})
+                    else:
+                        print(f"[Homework] 测试点{i+1} 不匹配: expected={repr(tc_expected)}, actual={repr(actual_output)}")
+                        results.append({'index': i + 1, 'passed': False, 'reason': '答案错误'})
+                except subprocess.TimeoutExpired:
+                    results.append({'index': i + 1, 'passed': False, 'reason': '超时'})
+                except Exception as e:
+                    print(f"[Homework] 测试点{i+1}执行异常: {e}")
+                    results.append({'index': i + 1, 'passed': False, 'reason': '系统错误'})
+        else:
+            return jsonify({"result": "error", "message": f"不支持的语言: {language}"}), 400
+    
+    finally:
+        # 清理临时文件
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    
+    all_passed = (passed == total)
+    
+    # 保存答题记录
+    try:
+        student_id_number = session.get('student_id_number', 'anonymous')
+        homework_id = session.get('xiaohang_homework_id', '')
+        
+        redis_client = get_redis_client()
+        problem_key = f"xiaohang_problem:{session_id}"
+        problem_data = redis_client.get(problem_key)
+        current_problem = ''
+        if problem_data:
+            problem_info = json.loads(problem_data.decode('utf-8'))
+            current_problem = problem_info.get('problem', '')
+        
+        diagnosis_result = f"通过 {passed}/{total} 个测试点"
+        save_answer_record(
+            student_id=student_id_number,
+            session_id=session_id,
+            topic=homework_id,
+            difficulty=session.get('xiaohang_difficulty', '简单'),
+            problem_text=current_problem,
+            submitted_code=user_code,
+            diagnosis_result=diagnosis_result,
+            is_correct=all_passed,
+            language=language
+        )
+    except Exception as db_err:
+        print(f"[DB] 保存作业答题记录失败: {db_err}")
+    
+    return jsonify({
+        "passed": passed,
+        "total": total,
+        "all_passed": all_passed,
+        "results": results
+    })
