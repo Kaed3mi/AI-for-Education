@@ -2,7 +2,7 @@
 // ==================== 全局变量 ====================
 
 const KNOWLEDGE_POINTS = [
-    '栈', '队列', '数组', '链表', '哈希表', '散列表', '堆', '优先队列',
+    '数组', '队列', '栈', '链表', '哈希表', '散列表', '堆', '优先队列',
     '树', '二叉树', '二叉搜索树', 'AVL', '红黑树', 'B树', '字典树', 'Trie',
     '图', 'DFS', 'BFS', '最短路', '最小生成树', '拓扑排序',
     '排序', '查找', '动态规划', '贪心', '回溯', '递归'
@@ -13,7 +13,7 @@ const KNOWLEDGE_POINTS = [
 let homeworkMode = false;       // 是否处于作业模式
 let currentHomeworkId = '';      // 当前作业ID，如 'homework1'
 let currentHomeworkProblemIdx = 0; // 当前题目索引
-let currentCategory = 'knowledge'; // 当前选择页分类
+let currentCategory = 'homework1'; // 当前选择页分类
 
 // 作业数据从 homework_data.js 中加载（HOMEWORK_DATA 全局变量）
 

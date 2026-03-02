@@ -263,12 +263,48 @@ class NormalLLM(LLM):
         return "normal"
 
 
+class OpenAIServerModel(LLM):
+    def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
+        """调用测试模型 API - 生成器版本用于流式输出"""
+        try:
+            client = OpenAI(
+                api_key="sk-I8oiGaYzHqcIXhjKz7D0fQ",
+                base_url=os.environ.get("PAPER_WRITING_API_BASE", "http://10.70.247.113:4000/v1")
+            )
+            response = client.chat.completions.create(
+                model="Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=8192,
+                stream=True,
+                timeout=120
+            )
+            
+            has_content = False
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    has_content = True
+                    yield chunk.choices[0].delta.content
+            
+            if not has_content:
+                yield "\n\n⚠️ 未收到测试模型API响应，请重试。"
+                    
+        except Exception as e:
+            yield f"⚠️ 调用测试模型API时出错：{str(e)}"
+    
+    @property
+    def _llm_type(self) -> str:
+        return "test_model"
+
+
 def get_llm(model_name: str = "xhang") -> LLM:
     """根据模型名称返回对应的LLM实例"""
     if model_name == "loopcoder":
         return LoopCoderLLM()
     elif model_name == "normal":
         return NormalLLM()
+    elif model_name == "test_model":
+        return OpenAIServerModel()
     return XiaohangLLM()
 
 

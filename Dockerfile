@@ -22,7 +22,13 @@ RUN echo "flask==2.3.3" > requirements-docker.txt && \
     echo "pymysql==1.1.0" >> requirements-docker.txt 
 
 # 安装 gcc（作业模式本地编译需要）
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+# RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+RUN echo "deb https://mirrors.aliyun.com/debian/ trixie main" > /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian-security/ trixie-security main" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian/ trixie-updates main" >> /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
 # 安装 Python 依赖
 RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com -r requirements-docker.txt
