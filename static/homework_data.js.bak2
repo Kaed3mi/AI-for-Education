@@ -1,7 +1,7 @@
 // 作业数据：每次作业包含多道题，每道题有题目描述和测试用例
 // 此文件独立存放作业题目与测试点，方便维护和扩展
 const HOMEWORK_DATA = {
-    'homework1': {
+    'homework0': {
         name: '第一次作业',
         problems: [
             {

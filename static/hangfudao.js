@@ -11,9 +11,9 @@ const KNOWLEDGE_POINTS = [
 // ==================== 作业模式数据 ====================
 // 作业模式标记
 let homeworkMode = false;       // 是否处于作业模式
-let currentHomeworkId = '';      // 当前作业ID，如 'homework1'
+let currentHomeworkId = '';      // 当前作业ID，如 'homework0'
 let currentHomeworkProblemIdx = 0; // 当前题目索引
-let currentCategory = 'homework1'; // 当前选择页分类
+let currentCategory = 'homework0'; // 当前选择页分类
 
 // 作业数据从 homework_data.js 中加载（HOMEWORK_DATA 全局变量）
 

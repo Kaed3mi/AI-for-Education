@@ -1,0 +1,16 @@
+    'homework1':{
+        name: '25级第一次作业',
+        problems: [
+            {
+                title: '',
+                description: ``,
+                testCases: [
+                    {input: '', expected_output: ''},
+                    {input: '', expected_output: ''},
+                    {input: '', expected_output: ''},
+                    {input: '', expected_output: ''},
+                    {input: '', expected_output: ''},
+                ]
+            }
+        ]
+    }
