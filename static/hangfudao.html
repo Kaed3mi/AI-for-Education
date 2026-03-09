@@ -1886,6 +1886,7 @@
             <div style="min-width:160px;display:flex;flex-direction:column;gap:10px;">
                 <button class="knowledge-btn selected" id="cat-btn-homework0" onclick="switchCategory('homework0')" style="font-size:16px;padding:16px 20px;">📝 25级程序设计基础练习（不算入成绩）</button>
                 <button class="knowledge-btn" id="cat-btn-homework1" onclick="switchCategory('homework1')" style="font-size:16px;padding:16px 20px;">📝 25级第一次作业</button>
+                <button class="knowledge-btn" id="cat-btn-homework2" onclick="switchCategory('homework2')" style="font-size:16px;padding:16px 20px;">📝 25级第二次作业</button>
                 <button class="knowledge-btn" id="cat-btn-knowledge" onclick="switchCategory('knowledge')" style="font-size:16px;padding:16px 20px;">📚 知识点</button>
             </div>
             <!-- 右侧内容区 -->
@@ -1916,9 +1917,9 @@
                         <button class="toolbar-btn" data-type="伪代码" onclick="showContent('伪代码')">
                             <span class="icon">📋</span>伪代码
                         </button>
-                        <!-- <button class="toolbar-btn" data-type="核心语句" onclick="showContent('核心语句')">
+                        <button class="toolbar-btn" data-type="核心语句" onclick="showContent('核心语句')">
                             <span class="icon">🔑</span>代码补全
-                        </button> -->
+                        </button>
                     </div>
                     <!-- <button class="toolbar-btn" id="custom-problem-btn" onclick="startCustomProblem()" style="margin-left:auto;background:#fff3e0;border-color:#ff9800;color:#e65100;height:34px;display:inline-flex;align-items:center;">
                         <span class="icon">✏️</span>自主出题
@@ -1929,10 +1930,10 @@
                         <option value="困难">困难</option>
                     </select>
                     <select id="model-selector" class="model-selector loopcoder" onchange="onModelChange(this.value)" style="height:34px;">
-                        <!-- <option value="xhang">XHang</option> -->
                         <!-- <option value="loopcoder" selected>LoopCoder</option> -->
                         <!-- <option value="normal">普通模型</option> -->
                         <option value="test_model" selected>编程模型</option>
+                        <option value="xhang">XHang</option>
                         <option value="loopcoder">LoopCoder</option>
                     </select>
                 </div>
@@ -2002,7 +2003,7 @@
                 
                 <div class="submit-section">
                     <button class="submit-btn primary" onclick="submitCode()">提交代码 ✓</button>
-                    <!-- <button class="submit-btn answer" onclick="showContent('正确答案')">✅ 正确答案</button> -->
+                    <button class="submit-btn answer" onclick="showContent('正确答案')">✅ 正确答案</button>
                 </div>
             </div>
         </div>

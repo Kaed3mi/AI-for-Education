@@ -2730,9 +2730,9 @@ def submit_code_homework():
             f.write(fixed_code)
         
         if language == 'C':
-            # 编译（加 -std=c99 确保 main 末尾隐式 return 0）
+            # 编译（移除 -std=c99 以支持更多旧式写法，添加 -w 忽略所有警告）
             compile_proc = subprocess.run(
-                ['gcc', src_file, '-o', exe_file, '-lm', '-std=c99'],
+                ['gcc', src_file, '-o', exe_file, '-lm', '-w'],
                 capture_output=True, text=True, timeout=15
             )
             if compile_proc.returncode != 0:
@@ -2746,27 +2746,77 @@ def submit_code_homework():
             for i, tc in enumerate(test_cases):
                 tc_input = tc.get('input', '')
                 tc_expected = tc.get('expected_output', '').strip()
+                tc_files = tc.get('files', {})  # 获取测试用例定义的文件
+                tc_expected_files = tc.get('expected_files', {}) # 获取预期的输出文件
+
+                # 准备测试环境：将测试文件写入临时目录
+                current_cwd = os.getcwd() # 记录当前工作目录
                 try:
+                    # 切换到临时目录运行，以便程序能找到文件
+                    os.chdir(tmp_dir)
+                    
+                    # 写入输入文件
+                    for filename, content in tc_files.items():
+                        with open(os.path.join(tmp_dir, filename), 'w', encoding='utf-8') as f:
+                            f.write(content)
+
                     run_proc = subprocess.run(
                         [exe_file],
                         input=tc_input, capture_output=True, text=True, timeout=10
                     )
-                    if run_proc.returncode != 0:
-                        print(f"[Homework] 测试点{i+1} 运行时错误: {run_proc.stderr[:200]}")
-                        results.append({'index': i + 1, 'passed': False, 'reason': '运行时错误'})
-                        continue
-                    actual_output = run_proc.stdout.strip()
-                    if actual_output == tc_expected:
+                    
+                    # 检查文件输出模式
+                    file_check_passed = True
+                    if tc_expected_files:
+                        for filename, expected_content in tc_expected_files.items():
+                            file_path = os.path.join(tmp_dir, filename)
+                            if not os.path.exists(file_path):
+                                file_check_passed = False
+                                print(f"[Homework] 测试点{i+1} 缺少输出文件: {filename}")
+                                break
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                actual_content = f.read().strip()
+                                # 简单处理：去除首尾空白后比较
+                                if actual_content != expected_content.strip():
+                                    file_check_passed = False
+                                    print(f"[Homework] 测试点{i+1} 文件 {filename} 内容不匹配: expected={repr(expected_content)}, actual={repr(actual_content)}")
+                                    break
+                    
+                    # 综合判定：
+                    # 1. 如果有预期文件输出，优先检查文件内容是否一致
+                    # 2. 如果没有预期文件，或者文件一致，再检查标准输出（如果有 expected_output 的话）
+                    
+                    is_correct = False
+                    if tc_expected_files:
+                         # 文件模式：只要文件对就算过（忽略 stdout 和 returncode）
+                         if file_check_passed:
+                             is_correct = True
+                    else:
+                        # 标准输出模式
+                        actual_output = run_proc.stdout.strip()
+                        if actual_output == tc_expected:
+                            is_correct = True
+                    
+                    if is_correct:
                         passed += 1
                         results.append({'index': i + 1, 'passed': True})
+                    # 如果不正确，再检查是否是运行时错误
+                    elif run_proc.returncode != 0:
+                        print(f"[Homework] 测试点{i+1} 运行时错误: {run_proc.stderr[:200]}")
+                        results.append({'index': i + 1, 'passed': False, 'reason': '运行时错误'})
                     else:
-                        print(f"[Homework] 测试点{i+1} 不匹配: expected={repr(tc_expected)}, actual={repr(actual_output)}")
+                        if not tc_expected_files:
+                             print(f"[Homework] 测试点{i+1} 不匹配: expected={repr(tc_expected)}, actual={repr(actual_output)}")
                         results.append({'index': i + 1, 'passed': False, 'reason': '答案错误'})
+
                 except subprocess.TimeoutExpired:
                     results.append({'index': i + 1, 'passed': False, 'reason': '超时'})
                 except Exception as e:
                     print(f"[Homework] 测试点{i+1}执行异常: {e}")
                     results.append({'index': i + 1, 'passed': False, 'reason': '系统错误'})
+                finally:
+                    # 恢复工作目录
+                    os.chdir(current_cwd)
         
         elif language == 'Python':
             # Python 直接运行，不需要编译
