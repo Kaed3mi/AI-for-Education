@@ -64,9 +64,43 @@ let panelIdByType = new Map(); // type(title) -> panelId 记录每个模块类�
 // 追问悬浮小人对应的模块类型列表（这些模块使用悬浮小人追问，不显示内联追问按钮）
 const AVATAR_FOLLOWUP_MODULES = ['思路', '框架', '伪代码', '核心语句'];
 
+// 当前登录学生信息
+let currentStudentInfo = null;
+
+/**
+ * 从 URL 中提取 cgtoken 并发送给后端验证，自动识别学生身份
+ */
+function verifyCgToken() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const cgtoken = urlParams.get('cgtoken');
+    if (!cgtoken) return;
+
+    fetch('/api/auth/verify_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cgtoken: cgtoken })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.student_id) {
+            currentStudentInfo = data;
+            console.log('学生认证成功:', data.student_id);
+        } else {
+            console.warn('cgtoken 验证失败:', data.error);
+        }
+    })
+    .catch(err => {
+        console.error('cgtoken 验证请求失败:', err);
+    });
+}
+
 // ==================== 页面初始化 ====================
 
 document.addEventListener('DOMContentLoaded', function() {
+    // ---- 希冀平台 cgtoken 鉴权 ----
+    verifyCgToken();
+
     initKnowledgeGrid();
     initMermaid();
 

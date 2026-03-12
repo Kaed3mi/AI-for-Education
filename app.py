@@ -4,7 +4,8 @@ from flask_cors import CORS
 from config import OllamaLLM, XiaohangLLM, get_system_prompts, get_system_base_prompt, question_generation_prompts, exam_generation_prompt
 from config_programming_assistant import get_programming_assistant_base_prompt, get_programming_assistant_prompts
 from flask_session import Session
-from models import db, Student, AnswerRecord, KnowledgeMastery
+from models import db, Student, AnswerRecord, KnowledgeMastery, get_or_create_student
+import jwt as pyjwt
 import redis
 import time
 import logging
@@ -191,6 +192,73 @@ def stream_chat_completion(url, model, messages, api_key=None, timeout=0):
 # @app.route('/static/xiaohang_v3.html')
 # def xiaohang_v3():
 #     return app.send_static_file('xiaohang_v3.html')
+
+# ---------------------- JWT 鉴权（希冀平台 cgtoken） ----------------------
+
+def decode_cgtoken(token):
+    """解析希冀平台的 cgtoken（无密钥，仅解码 payload）"""
+    try:
+        payload = pyjwt.decode(token, options={"verify_signature": False}, algorithms=["HS256"])
+        student_id = payload.get('userid', '')
+        return payload, student_id
+    except Exception:
+        return None, None
+
+
+@app.route('/api/auth/verify_token', methods=['POST'])
+def verify_cgtoken():
+    """验证希冀平台传来的 cgtoken，解析学号并自动注册学生"""
+    token = request.json.get('cgtoken')
+    if not token:
+        return jsonify({"error": "缺少 cgtoken"}), 400
+
+    payload, student_id = decode_cgtoken(token)
+    if not student_id:
+        return jsonify({"error": "token 无效或已过期"}), 401
+
+    # 自动注册/获取学生
+    student = get_or_create_student(
+        student_id=student_id,
+        name=payload.get('name', ''),
+        class_name=payload.get('class_name', '')
+    )
+
+    # 存入 session
+    session['student_id_number'] = student_id
+    session['user_id'] = student_id
+
+    return jsonify({
+        "student_id": student.student_id,
+        "name": student.name,
+        "role": payload.get('role', ''),
+        "courseid": payload.get('courseid', ''),
+        "message": "认证成功"
+    })
+
+
+@app.route('/api/auth/student_info', methods=['GET'])
+def get_current_student_info():
+    """获取当前登录学生的使用信息"""
+    student_id = session.get('student_id_number')
+    if not student_id:
+        return jsonify({"error": "未登录"}), 401
+
+    student = Student.query.filter_by(student_id=student_id).first()
+    if not student:
+        return jsonify({"error": "学生不存在"}), 404
+
+    total_answers = AnswerRecord.query.filter_by(student_db_id=student.id).count()
+    correct_answers = AnswerRecord.query.filter_by(student_db_id=student.id, is_correct=True).count()
+    mastery_list = KnowledgeMastery.query.filter_by(student_db_id=student.id).all()
+
+    return jsonify({
+        "student": student.to_dict(),
+        "total_answers": total_answers,
+        "correct_answers": correct_answers,
+        "accuracy": round(correct_answers / total_answers * 100, 1) if total_answers > 0 else 0,
+        "mastery": [m.to_dict() for m in mastery_list]
+    })
+
 
 @app.route('/')
 # @app.route('/static/hangfudao.html')
