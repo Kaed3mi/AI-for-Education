@@ -824,6 +824,7 @@ def pregenerate_all():
     problem_info = json.loads(problem_data.decode('utf-8'))
     current_problem = problem_info['problem']
     standard_answer = problem_info.get('standard_answer', '')
+    is_homework = problem_info.get('homework_mode', False)
     topics = problem_info['topics']
     language = session.get('xiaohang_language', 'C')
     
@@ -838,23 +839,29 @@ def pregenerate_all():
             lang_desc = 'C语言' if language == 'C' else 'Python'
             
             # 等待标准答案生成完成（可能还在generate_problem中生成）
-            max_wait = 60
-            waited = 0
-            while waited < max_wait:
-                # 检查题目是否已切换
-                if get_generation_token(session_id) != gen_token_at_start:
-                    yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
-                    return
-                problem_data_check = redis_client.get(problem_key)
-                if problem_data_check:
-                    info_check = json.loads(problem_data_check.decode('utf-8'))
-                    if info_check.get('standard_answer', ''):
-                        standard_answer_final = info_check['standard_answer']
-                        break
-                time.sleep(1)
-                waited += 1
-            else:
+            # 作业模式下不会异步生成标准答案，直接跳过等待
+            if standard_answer:
                 standard_answer_final = standard_answer
+            elif is_homework:
+                standard_answer_final = ''
+            else:
+                max_wait = 60
+                waited = 0
+                while waited < max_wait:
+                    # 检查题目是否已切换
+                    if get_generation_token(session_id) != gen_token_at_start:
+                        yield json.dumps({"status": "cancelled", "message": "题目已切换"}) + "\n"
+                        return
+                    problem_data_check = redis_client.get(problem_key)
+                    if problem_data_check:
+                        info_check = json.loads(problem_data_check.decode('utf-8'))
+                        if info_check.get('standard_answer', ''):
+                            standard_answer_final = info_check['standard_answer']
+                            break
+                    time.sleep(1)
+                    waited += 1
+                else:
+                    standard_answer_final = ''
             
             yield json.dumps({"status": "generating", "module": "框架"}) + "\n"
             
@@ -2679,6 +2686,7 @@ def switch_homework_problem():
         json.dumps({
             "problem": problem_text,
             "standard_answer": "",
+            "homework_mode": True,
             "difficulty": session.get('xiaohang_difficulty', '简单'),
             "topics": topics,
             "timestamp": time.time()
