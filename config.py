@@ -200,17 +200,17 @@ class XiaohangLLM(LLM):
         return "xiaohang"
 
 
-# LoopCoder 大模型
+# LoopCoder40B 大模型
 class LoopCoderLLM(LLM):
     def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
         """调用 LoopCoder API - 生成器版本用于流式输出"""
         try:
             client = OpenAI(
                 api_key="EMPTY",
-                base_url="https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-loop/v1/8000/v1"
+                base_url="https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model-40b/1/8010/v1"
             )
             response = client.chat.completions.create(
-                model="IQuest-Coder-V1-40B-Loop-Instruct",
+                model="LoopCoder-40B-beta",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.6,
                 top_p=0.95,
@@ -229,7 +229,38 @@ class LoopCoderLLM(LLM):
 
     @property
     def _llm_type(self) -> str:
-        return "loopcoder"
+        return "loopcoder40b"
+
+# LoopCoder400B 大模型
+class LoopCoderLLM2(LLM):
+    def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
+        """调用 LoopCoder API - 生成器版本用于流式输出"""
+        try:
+            client = OpenAI(
+                api_key="EMPTY",
+                base_url="https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model/1/8010/v1"
+            )
+            response = client.chat.completions.create(
+                model="LoopCoder-400B-beta",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.6,
+                top_p=0.95,
+                stream=True,
+                timeout=120
+            )
+            has_content = False
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    has_content = True
+                    yield chunk.choices[0].delta.content
+            if not has_content:
+                yield "\n\n⚠️ 未收到LoopCoder API响应，请重试。"
+        except Exception as e:
+            yield f"⚠️ 调用LoopCoder API时出错：{str(e)}"
+
+    @property
+    def _llm_type(self) -> str:
+        return "loopcoder400b"
 
 
 class NormalLLM(LLM):

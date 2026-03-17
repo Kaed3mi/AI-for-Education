@@ -137,8 +137,8 @@ MODEL_ENDPOINTS = {
     },
     "loopcoder": {
         "name": "模型五",
-        "url": "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-loop/v1/8000/v1/chat/completions",
-        "model": "IQuest-Coder-V1-40B-Loop-Instruct",
+        "url": "https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model-40b/1/8010/v1/chat/completions",
+        "model": "LoopCoder-40B-beta",
     },
 }
 

@@ -12,8 +12,8 @@ MODEL_CONFIGS = {
         "model": "IQuest-Coder-V1-40B-Instruct"
     },
     "loopcoder": {
-        "base_url": "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/lzchai/iquest-loop/v1/8000/v1",
-        "model": "IQuest-Coder-V1-40B-Loop-Instruct"
+        "base_url": "https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model-40b/1/8010/v1",
+        "model": "LoopCoder-40B-beta"
     }
 }
 
