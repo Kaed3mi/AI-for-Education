@@ -1,6 +1,8 @@
 // 航辅导 - 智能编程辅导系统 JavaScript
 // ==================== 全局变量 ====================
 
+const API_PREFIX = '/api';
+
 const KNOWLEDGE_POINTS = [
     '数组', '队列', '栈', '链表', '哈希表', '散列表', '堆', '优先队列',
     '树', '二叉树', '二叉搜索树', 'AVL', '红黑树', 'B树', '字典树', 'Trie',
@@ -75,7 +77,7 @@ function verifyCgToken() {
     const cgtoken = urlParams.get('cgtoken');
     if (!cgtoken) return;
 
-    fetch('/api/auth/verify_token', {
+    fetch(`${API_PREFIX}/auth/verify_token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -124,18 +126,119 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    // 返回选择页面按钮
+    const backBtn = document.getElementById('back-selection-page');
+    if (backBtn) {
+        backBtn.addEventListener('click', backToSelectionPage);
+    }
 });
 
+// 返回选择页面
+function backToSelectionPage() {
+    // 清理所有浮动面板
+    const allPanelIds = Array.from(floatingPanels.keys());
+    for (const panelId of allPanelIds) {
+        const panelEl = document.getElementById(`floating-panel-${panelId}`);
+        if (panelEl) panelEl.remove();
+    }
+    floatingPanels.clear();
+    panelIdByType.clear();
+    panelStreamBuffers.clear();
+    panelContentReady.clear();
+    currentPanelId = null;
+    activePanelId = null;
+    floatingPanelVisible = false;
+    panelZIndexCounter = 1000;
+
+    // 清理最小化气泡
+    if (typeof renderBubbles === 'function') renderBubbles();
+
+    // 关闭追问小窗和悬浮小人
+    if (typeof closeFollowupChat === 'function') closeFollowupChat();
+    if (typeof hideFloatingAvatar === 'function') hideFloatingAvatar();
+    if (typeof followupChatHistory !== 'undefined') followupChatHistory = {};
+    if (typeof currentGuidanceType !== 'undefined') currentGuidanceType = null;
+
+    // 清理 Mermaid 残留
+    cleanupMermaidErrors();
+
+    // 重置页面状态
+    document.body.classList.remove('practice-mode');
+    document.getElementById('selection-page').classList.remove('hidden');
+    document.getElementById('practice-page').classList.remove('active');
+
+    // 重置作业模式状态
+    homeworkMode = false;
+    currentHomeworkId = '';
+    currentHomeworkProblemIdx = 0;
+
+    // 重置其他状态
+    sessionId = null;
+    problemContent = '';
+    diagnosisHasErrors = true;
+    codeIsCorrect = false;
+    isModuleGenerating = false;
+    currentGeneratingModule = null;
+    isRightModuleGenerating = false;
+    currentRightGeneratingType = null;
+
+    // 重新渲染知识点网格
+    initKnowledgeGrid();
+
+    // 恢复导航栏分类按钮的选中状态
+    document.querySelectorAll('[id^="cat-btn-"]').forEach(btn => btn.classList.remove('selected'));
+    const activeBtn = document.getElementById('cat-btn-' + currentCategory);
+    if (activeBtn) activeBtn.classList.add('selected');
+}
+
 function initKnowledgeGrid() {
+    function renderItem(title, count){
+        const htmlString = `<button
+                        style="height: 66px; overflow: hidden; display: flex;flex-direction: row; align-items: center; gap: 12px; background-color: #FBFCFD; border-radius: 16px; padding: 0px 8px; border: 1px solid #E8EAED; cursor: pointer;">
+                        <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                d="M38.9 19.5C37.8 19.5 36.9 20.4 36.9 21.5V33.4C36.9 34.8 35.7 36 34.3 36H9.6C8.2 36 7 34.8 7 33.4V9.6C7 8.2 8.2 7 9.6 7H22.4C23.5 7 24.4 6.1 24.4 5C24.4 3.9 23.5 3 22.4 3H9.6C6 3 3 6 3 9.6V33.4C3 37 6 40 9.6 40H34.3C37.9 40 40.9 37 40.9 33.4V21.5C40.9 20.4 40 19.5 38.9 19.5Z"
+                                fill="#333333" />
+                            <path d="M14 30L21 28L16 23L14 30Z" fill="#333333" />
+                            <path d="M22.9999 26L40.9999 8L35.9999 3L17.9999 21L22.9999 26Z" fill="#333333" />
+                        </svg>
+
+                        <div style="display: flex; flex-direction: column; overflow: hidden; flex: 1;">
+                            <span
+                                style="font-size: 16px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;"
+                                title="${title}">${title}</span>
+                            <div style="display: none; flex-direction: row; align-items: center; overflow: hidden; ">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+                                    xmlns="http://www.w3.org/2000/svg">
+                                    <path
+                                        d="M10 10.5V9.5C10 8.96957 9.78929 8.46086 9.41421 8.08579C9.03914 7.71071 8.53043 7.5 8 7.5H4C3.46957 7.5 2.96086 7.71071 2.58579 8.08579C2.21071 8.46086 2 8.96957 2 9.5V10.5"
+                                        stroke="#555555" stroke-linecap="round" stroke-linejoin="round" />
+                                    <path
+                                        d="M6 5.5C7.10457 5.5 8 4.60457 8 3.5C8 2.39543 7.10457 1.5 6 1.5C4.89543 1.5 4 2.39543 4 3.5C4 4.60457 4.89543 5.5 6 5.5Z"
+                                        stroke="#555555" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                <span style="margin-left: 6px;font-size: 10px; color: #555555;">${count} 人学习</span>
+                            </div>
+                        </div>
+                        <div
+                            style="height: 28px; display: flex; justify-content: center; align-items: center; padding: 0px 10px; background-color: #85C5FF; border-radius: 28px; font-size:  16px; color: #FFFFFF;">
+                            开始学习
+                        </div>
+                    </button>`;
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlString, 'text/html');
+        return doc.body.firstChild;
+    }
+
     const grid = document.getElementById('knowledge-grid');
     grid.innerHTML = '';
-    
+
     if (currentCategory === 'knowledge') {
         // 知识点模式
         KNOWLEDGE_POINTS.forEach(point => {
-            const btn = document.createElement('button');
-            btn.className = 'knowledge-btn';
-            btn.textContent = point;
+            const btn = renderItem(point, 512);
+            btn.className = 'knowledge-grid-button';
             btn.onclick = () => selectKnowledge(point, btn);
             grid.appendChild(btn);
         });
@@ -144,9 +247,8 @@ function initKnowledgeGrid() {
         const hwData = HOMEWORK_DATA[currentCategory];
         if (hwData) {
             hwData.problems.forEach((prob, idx) => {
-                const btn = document.createElement('button');
-                btn.className = 'knowledge-btn';
-                btn.textContent = prob.title;
+                const btn = renderItem(prob.title, 512);
+                btn.className = 'knowledge-grid-button';
                 btn.onclick = () => selectHomeworkProblem(currentCategory, idx, btn);
                 grid.appendChild(btn);
             });
@@ -180,7 +282,7 @@ async function selectHomeworkProblem(homeworkId, problemIdx, btn) {
     
     // 初始化作业会话
     try {
-        const response = await fetch('/api/xiaohang/init_homework_session', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/init_homework_session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -349,7 +451,7 @@ function showHomeworkProblem(problem) {
 // 将作业题目存入后端Redis（轻量级，不生成标准答案，立即返回）
 async function storeHomeworkProblemToBackend(problem) {
     try {
-        await fetch('/api/xiaohang/switch_homework_problem', {
+        await fetch(`${API_PREFIX}/xiaohang/switch_homework_problem`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -382,7 +484,7 @@ async function submitCodeHomework() {
     });
     
     try {
-        const response = await fetch('/api/xiaohang/submit_code_homework', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/submit_code_homework`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -857,7 +959,7 @@ async function selectKnowledge(point, btn) {
     
     // 初始化会话并进入练习页面
     try {
-        const response = await fetch('/api/xiaohang/init_session', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/init_session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -983,7 +1085,7 @@ function handleLanguageChange(lang) {
     
     // 通知后端语言变更（存入session）
     if (sessionId) {
-        fetch('/api/xiaohang/change_language', {
+        fetch(`${API_PREFIX}/xiaohang/change_language`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -1049,7 +1151,7 @@ async function generateProblem() {
     frameworkGenerated = false;
     
     try {
-        const response = await fetch('/api/xiaohang/generate_problem', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/generate_problem`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include'
@@ -1269,7 +1371,7 @@ async function triggerPregenerate() {
     pregeneratingModule = null;
     
     try {
-        const response = await fetch('/api/xiaohang/pregenerate_all', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/pregenerate_all`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include'
@@ -1385,7 +1487,7 @@ async function loadPregeneratedToPanel(type, targetPanelId) {
     }
     
     try {
-        const response = await fetch('/api/xiaohang/get_pregenerated', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_pregenerated`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -1472,7 +1574,7 @@ async function getGuidanceToFloatingWithPregenerate(type) {
     }
     
     try {
-        const response = await fetch('/api/xiaohang/get_guidance', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_guidance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -1591,7 +1693,7 @@ async function getGuidanceToFloating(type) {
     }
     
     try {
-        const response = await fetch('/api/xiaohang/get_guidance', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_guidance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -1923,7 +2025,7 @@ async function getCorrectAnswerToFloating() {
     };
     
     try {
-        const response = await fetch('/api/xiaohang/get_correct_answer', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_correct_answer`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include'
@@ -2029,7 +2131,7 @@ async function getGuidance(type) {
     display.innerHTML = '<p class="loading">正在生成内容...</p>';
     
     try {
-        const response = await fetch('/api/xiaohang/get_guidance', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_guidance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2075,7 +2177,7 @@ async function getCorrectAnswer() {
     display.innerHTML = '<p class="loading">正在获取正确答案...</p>';
     
     try {
-        const response = await fetch('/api/xiaohang/get_correct_answer', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_correct_answer`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include'
@@ -2276,7 +2378,7 @@ async function getHint(level) {
     lockRightModuleButtons(lockType);
     
     try {
-        const response = await fetch('/api/xiaohang/get_hint', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_hint`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2476,7 +2578,7 @@ async function generateCounterexample() {
     lockRightModuleButtons('反例');
     
     try {
-        const response = await fetch('/api/xiaohang/generate_counterexample', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/generate_counterexample`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2508,7 +2610,7 @@ async function analyzeComplexity() {
     lockRightModuleButtons('复杂度');
     
     try {
-        const response = await fetch('/api/xiaohang/analyze_complexity', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/analyze_complexity`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2666,7 +2768,7 @@ async function submitCode() {
     });
     
     try {
-        const response = await fetch('/api/xiaohang/submit_code', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/submit_code`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2774,7 +2876,7 @@ function checkAndUpdateDifficulty(text) {
 
 async function onDifficultyChange(newDifficulty) {
     try {
-        const response = await fetch('/api/xiaohang/change_difficulty', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/change_difficulty`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2871,7 +2973,7 @@ async function onModelChange(newModel) {
     if (newModel === currentModel) return;
     
     try {
-        const response = await fetch('/api/xiaohang/change_model', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/change_model`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -2955,7 +3057,7 @@ async function loadHistoryRecords() {
     content.innerHTML = '<p style="text-align:center;color:#888;padding:40px;">加载中...</p>';
 
     try {
-        let url = '/api/records/history?page=' + historyCurrentPage + '&per_page=10';
+        let url = `${API_PREFIX}/records/history?page=` + historyCurrentPage + '&per_page=10';
         if (historyTopicFilter) url += '&topic=' + encodeURIComponent(historyTopicFilter);
 
         const resp = await fetch(url, { credentials: 'include' });
@@ -3100,7 +3202,7 @@ async function requestKnowledgeSummary() {
     responseDiv.innerHTML = '<p class="loading">正在生成总结...</p>';
     
     try {
-        const response = await fetch('/api/xiaohang/knowledge_seeking', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/knowledge_seeking`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -3714,7 +3816,7 @@ async function continueFrameworkDecompose(cardId) {
     const decompositionPath = buildDecompositionPath(cardId);
     
     try {
-        const response = await fetch('/api/xiaohang/decompose_problem', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/decompose_problem`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -3972,7 +4074,7 @@ async function syncLeafNodesToBackend() {
     if (leafNodes.length === 0) return;
     
     try {
-        await fetch('/api/xiaohang/save_framework_leaf_nodes', {
+        await fetch(`${API_PREFIX}/xiaohang/save_framework_leaf_nodes`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -4020,7 +4122,7 @@ async function regenerateModuleWithLeafNodes(moduleType) {
     display.innerHTML = '<p class="loading">正在基于最终分解结果重新生成...</p>';
     
     try {
-        const response = await fetch('/api/xiaohang/regenerate_with_leaf_nodes', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/regenerate_with_leaf_nodes`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -4579,7 +4681,7 @@ async function submitFollowUp(btn) {
     responseDiv.innerHTML = '<p class="loading">AI正在思考...</p>';
     
     try {
-        const response = await fetch('/api/xiaohang/follow_up_question', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/follow_up_question`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -5660,7 +5762,7 @@ async function sendFollowupChat() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
     try {
-        const response = await fetch('/api/xiaohang/follow_up_question', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/follow_up_question`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -5841,7 +5943,7 @@ async function confirmCustomProblem() {
     display.innerHTML = '<p class="loading">正在设置自主题目...</p>';
 
     try {
-        const response = await fetch('/api/xiaohang/set_custom_problem', {
+        const response = await fetch(`${API_PREFIX}/xiaohang/set_custom_problem`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
