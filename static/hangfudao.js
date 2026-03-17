@@ -1186,43 +1186,19 @@ function showContent(type) {
         const isCompleted = buffer ? buffer.completed : true;
         
         if (isCompleted) {
-            // 内容已生成完成，询问用户是否要重新生成
-            const moduleDisplayName = config.title;
-            if (confirm(`「${moduleDisplayName}」已生成，是否要重新生成？\n\n点击"确定"重新生成，点击"取消"查看已有内容。`)) {
-                // 用户选择重新生成，关闭旧面板并生成新内容
-                closeFloatingPanel(existingPanelId);
-                // 清除该模块的追问历史
-                if (followupChatHistory[type]) {
-                    delete followupChatHistory[type];
-                }
-                // 如果是智能审题，需要重置预生成状态
-                if (type === '思路') {
-                    pregenerateStarted = false;
-                    pregeneratedModules.clear();
-                    pregeneratingModule = null;
-                    // 同时清除其他依赖模块的面板
-                    ['代码框架', '伪代码', '代码补全'].forEach(title => {
-                        const pId = panelIdByType.get(title);
-                        if (pId) {
-                            closeFloatingPanel(pId);
-                        }
-                    });
-                    // 清除其他模块的追问历史
-                    delete followupChatHistory['框架'];
-                    delete followupChatHistory['伪代码'];
-                    delete followupChatHistory['核心语句'];
-                }
-                // 继续执行下面的生成逻辑
+            // 内容已生成完成，直接恢复显示（不弹确认框）
+            if (existingPanelData.isClosed) {
+                // 面板被关闭过但内容还在，恢复显示
+                restoreFromClosed(existingPanelId);
+            } else if (existingPanelData.isMinimized) {
+                // 面板被最小化，恢复显示
+                restoreFromMinimized(existingPanelId);
             } else {
-                // 用户选择查看已有内容
-                if (existingPanelData.isMinimized) {
-                    restoreFromMinimized(existingPanelId);
-                } else {
-                    bringPanelToFront(existingPanelId);
-                }
-                currentPanelId = existingPanelId;
-                return;
+                // 面板仍然可见，置顶显示
+                bringPanelToFront(existingPanelId);
             }
+            currentPanelId = existingPanelId;
+            return;
         } else {
             // 内容还在生成中，直接显示
             if (existingPanelData.isMinimized) {
@@ -3996,8 +3972,8 @@ async function regenerateModuleWithLeafNodes(moduleType) {
     // 找到对应面板或创建新面板
     const existingPanelId = panelIdByType.get(title);
     if (existingPanelId) {
-        // 使用原始关闭函数，避免触发hideFloatingAvatar（马上会重新显示）
-        _originalCloseFloatingPanel(existingPanelId);
+        // 彻底销毁旧面板（要重新生成内容），避免触发hideFloatingAvatar（马上会重新显示）
+        destroyFloatingPanel(existingPanelId);
     }
     
     const config = { '伪代码': { icon: '📋', title: '伪代码' }, '核心语句': { icon: '🔑', title: '代码补全' } };
@@ -4842,7 +4818,10 @@ function openFloatingPanel(icon, title) {
     const existingPanelId = panelIdByType.get(title);
     if (existingPanelId && floatingPanels.has(existingPanelId)) {
         const existingPanel = floatingPanels.get(existingPanelId);
-        if (existingPanel.isMinimized) {
+        if (existingPanel.isClosed) {
+            // 从关闭状态恢复
+            restoreFromClosed(existingPanelId);
+        } else if (existingPanel.isMinimized) {
             // 从最小化恢复
             restoreFromMinimized(existingPanelId);
         } else {
@@ -4853,8 +4832,9 @@ function openFloatingPanel(icon, title) {
         return;
     }
     
-    // 检查是否已达到最大数量
-    if (floatingPanels.size >= MAX_PANELS) {
+    // 检查是否已达到最大数量（已关闭的面板不计入）
+    const activePanelCount = Array.from(floatingPanels.values()).filter(p => !p.isClosed).length;
+    if (activePanelCount >= MAX_PANELS) {
         alert('最多只能同时打开5个窗口，请先关闭一些窗口');
         return;
     }
@@ -4919,6 +4899,49 @@ function closeFloatingPanel(panelId) {
     const panelData = floatingPanels.get(panelId);
     if (!panelData) return;
     
+    // 检查内容是否已生成完成
+    const buffer = panelStreamBuffers.get(panelId);
+    const isCompleted = buffer ? buffer.completed : false;
+    
+    if (isCompleted) {
+        // 内容已生成完成：只隐藏DOM，保留数据，标记为已关闭
+        // 这样再次点击按钮时可以直接恢复显示
+        const panelEl = document.getElementById(`floating-panel-${panelId}`);
+        if (panelEl) {
+            panelEl.classList.remove('active');
+            panelEl.style.display = 'none';
+        }
+        panelData.isClosed = true;
+        
+        // 更新当前面板ID
+        if (currentPanelId === panelId) {
+            currentPanelId = null;
+            for (const [id, data] of floatingPanels) {
+                if (!data.isMinimized && !data.isClosed) {
+                    currentPanelId = id;
+                    activePanelId = id;
+                    break;
+                }
+            }
+        }
+    } else {
+        // 内容未完成（正在生成或未开始）：彻底删除
+        destroyFloatingPanel(panelId);
+    }
+    
+    floatingPanelVisible = Array.from(floatingPanels.values()).some(d => !d.isMinimized && !d.isClosed);
+    
+    // 更新最小化圆球
+    renderBubbles();
+}
+
+// 彻底销毁面板（删除DOM和所有数据），用于重新生成等场景
+function destroyFloatingPanel(panelId) {
+    if (!panelId) return;
+    
+    const panelData = floatingPanels.get(panelId);
+    if (!panelData) return;
+    
     // 清理类型映射和缓冲区
     panelIdByType.delete(panelData.title);
     panelStreamBuffers.delete(panelId);
@@ -4936,18 +4959,13 @@ function closeFloatingPanel(panelId) {
     if (currentPanelId === panelId) {
         currentPanelId = null;
         for (const [id, data] of floatingPanels) {
-            if (!data.isMinimized) {
+            if (!data.isMinimized && !data.isClosed) {
                 currentPanelId = id;
                 activePanelId = id;
                 break;
             }
         }
     }
-    
-    floatingPanelVisible = floatingPanels.size > 0;
-    
-    // 更新最小化圆球
-    renderBubbles();
 }
 
 function minimizeFloatingPanel(panelId) {
@@ -5053,6 +5071,45 @@ function maximizeFloatingPanel(panelId) {
     
     // 置顶
     bringPanelToFront(panelId);
+}
+
+// 从关闭状态恢复面板（内容已生成完成，只是被隐藏了）
+function restoreFromClosed(panelId) {
+    const panelData = floatingPanels.get(panelId);
+    if (!panelData) return;
+    
+    const panelEl = document.getElementById(`floating-panel-${panelId}`);
+    if (!panelEl) return;
+    
+    // 恢复显示
+    panelEl.style.display = '';
+    panelEl.classList.add('active');
+    panelData.isClosed = false;
+    
+    // 置顶
+    bringPanelToFront(panelId);
+    
+    currentPanelId = panelId;
+    activePanelId = panelId;
+    floatingPanelVisible = true;
+    
+    // 更新最小化圆球
+    renderBubbles();
+    
+    // 检查是否需要显示悬浮追问小人
+    const titleToType = {
+        '智能审题': '思路',
+        '代码框架': '框架',
+        '伪代码': '伪代码',
+        '代码补全': '核心语句'
+    };
+    const moduleType = titleToType[panelData.title];
+    if (moduleType && AVATAR_FOLLOWUP_MODULES.includes(moduleType)) {
+        const buffer = panelStreamBuffers.get(panelId);
+        if (buffer && buffer.completed) {
+            showFloatingAvatar(moduleType);
+        }
+    }
 }
 
 // 从最小化恢复
