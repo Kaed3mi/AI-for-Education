@@ -61,13 +61,24 @@ def get_previous_guidance_outputs(session_id, guidance_type):
     
     return previous_outputs
 
-def build_constraint_context(previous_outputs, standard_answer):
-    """构建约束上下文，包含标准答案和前置模块输出"""
+def build_constraint_context(previous_outputs, standard_answer, guidance_type=None):
+    """构建约束上下文，包含标准答案和前置模块输出。
+    对于代码补全（核心语句）模块，标准答案会被脱敏处理，避免LLM直接输出完整代码。
+    """
     context_parts = []
     
     # 标准答案作为核心约束（不直接展示给学生）
     if standard_answer:
-        context_parts.append(f"""【标准答案（内部参考，用于保证一致性，不要直接展示给学生）】：
+        if guidance_type == '核心语句':
+            # 代码补全模块：对标准答案进行脱敏，只提供结构描述，不提供完整可运行代码
+            context_parts.append(f"""【标准答案（已脱敏 - 仅供参考代码结构和算法思路，严禁直接输出完整实现）】：
+以下是标准答案的代码结构概要，你需要基于此结构生成带有 TODO 空缺的代码：
+---
+{_redact_standard_answer_for_completion(standard_answer)}
+---
+【再次警告】：上述内容仅用于了解代码结构和算法方向。你输出的代码中，TODO 标记处必须只有注释说明，绝对不能包含任何实现代码。""")
+        else:
+            context_parts.append(f"""【标准答案（内部参考，用于保证一致性，不要直接展示给学生）】：
 {standard_answer}""")
     
     # 前置模块输出作为约束
@@ -84,6 +95,55 @@ def build_constraint_context(previous_outputs, standard_answer):
 {previous_outputs['框架']}""")
     
     return "\n\n".join(context_parts)
+
+
+def _redact_standard_answer_for_completion(standard_answer):
+    """对标准答案进行脱敏处理，移除核心实现细节，只保留结构框架描述。
+    防止LLM在代码补全模块中直接复制完整代码。
+    """
+    import re
+    lines = standard_answer.split('\n')
+    redacted_lines = []
+    in_code_block = False
+    code_block_lang = ''
+    func_signatures = []  # 收集函数签名
+    
+    for line in lines:
+        stripped = line.strip()
+        # 检测代码块开始
+        if stripped.startswith('```') and not in_code_block:
+            in_code_block = True
+            code_block_lang = stripped[3:].strip()
+            redacted_lines.append(f'[代码块 - {code_block_lang or "code"}]')
+            redacted_lines.append('[此处为标准答案的完整实现代码，已隐藏]')
+            redacted_lines.append('[你需要基于算法思路自行构建带TODO空缺的代码框架]')
+            continue
+        elif stripped.startswith('```') and in_code_block:
+            in_code_block = False
+            redacted_lines.append('[代码块结束]')
+            continue
+        
+        if in_code_block:
+            # 在代码块内，只提取函数签名和结构信息，不保留实现
+            # 提取C语言函数签名
+            func_match = re.match(r'^(\s*)((?:void|int|char|float|double|long|short|unsigned|struct\s+\w+)\s*\*?\s+\w+\s*\([^)]*\))\s*\{?\s*$', line)
+            if func_match:
+                func_signatures.append(f'  - 函数: {func_match.group(2).strip()}')
+            # 提取Python函数定义
+            py_func_match = re.match(r'^(\s*)def\s+(\w+\s*\([^)]*\))', line)
+            if py_func_match:
+                func_signatures.append(f'  - 函数: {py_func_match.group(2).strip()}')
+            # 跳过代码块内的具体实现
+            continue
+        else:
+            # 非代码块内容保留（如markdown说明文字）
+            redacted_lines.append(line)
+    
+    result = '\n'.join(redacted_lines)
+    if func_signatures:
+        result += '\n\n[标准答案包含的函数结构]：\n' + '\n'.join(func_signatures)
+    
+    return result
 
 def save_guidance_output(session_id, guidance_type, content):
     """保存模块输出到Redis，供后续模块使用"""
@@ -606,7 +666,7 @@ def get_guidance():
     previous_outputs = get_previous_guidance_outputs(session_id, guidance_type)
     
     # 构建约束上下文
-    constraint_context = build_constraint_context(previous_outputs, standard_answer)
+    constraint_context = build_constraint_context(previous_outputs, standard_answer, guidance_type=guidance_type)
     
     # 初始化该类型的对话历史
     chat_history_key = f"xiaohang_guidance_chat:{session_id}:{guidance_type}"
@@ -621,7 +681,17 @@ def get_guidance():
             system_prompts = get_system_prompts(language)
             
             # 根据类型获取对应的提示词，并加入一致性约束
-            consistency_instruction = """
+            if guidance_type == '核心语句':
+                # 代码补全模块不强调"与标准答案保持一致"，避免LLM直接输出标准答案代码
+                consistency_instruction = """
+【重要约束 - 一致性要求】：
+你的输出必须与前置模块（思路、框架、伪代码）的输出保持高度一致。
+- 你的内容必须是对前置模块的细化和具体化
+- 不要引入与前置模块矛盾的新思路或方法
+- TODO标记处必须是真正的空缺，不能包含实现代码
+"""
+            else:
+                consistency_instruction = """
 【重要约束 - 一致性要求】：
 你的输出必须与标准答案和前置模块的输出保持高度一致。
 - 如果有标准答案，你的指导必须引导学生走向这个答案
@@ -749,13 +819,23 @@ def get_guidance():
                     leaf_nodes = json.loads(leaf_data.decode('utf-8'))
                     leaf_constraint_text = format_leaf_nodes_for_prompt(leaf_nodes)
                 specific_instruction = f"""
-【代码补全模块特殊要求】：
-基于标准答案，生成一份带有 TODO 标记的不完整代码。
-将标准答案中2-3个关键算法部分替换为 TODO 注释标记。
+【代码补全模块特殊要求 - 严格执行】：
+生成一份带有 TODO 标记的不完整代码，其中2-3个关键算法部分被替换为 TODO 注释标记。
 {'使用 // TODO: 在这里补全代码：xxx 格式' if language == 'C' else '使用 # TODO: 在这里补全代码：xxx 格式'}
-只输出一份代码，不要分开展示完整代码和补全部分。
-代码补全必须与已生成的框架逻辑一致。
-代码中的每个功能块必须与代码框架的叶子节点一一对应。
+
+【核心规则 - TODO处绝对不能有实现代码】：
+1. TODO 注释标记处只能有一行注释说明需要实现什么功能，下面不能跟任何实现代码
+2. 正确示例：
+   // TODO: 在这里补全代码：实现密钥处理功能，去除重复字母
+   （这里什么都没有，留空让学生自己写）
+3. 错误示例（绝对禁止）：
+   // TODO: 在这里补全代码：实现密钥处理功能
+   void process_key() {{  // ← 这就是泄露了完整实现！
+       ...实际代码...
+   }}
+4. 只输出一份代码，不要分开展示完整代码和补全部分
+5. 代码补全必须与已生成的框架逻辑一致
+6. 代码中的每个功能块必须与代码框架的叶子节点一一对应
 
 {leaf_constraint_text}
 """
@@ -1032,24 +1112,40 @@ def pregenerate_all():
             yield json.dumps({"status": "generating", "module": "核心语句"}) + "\n"
             
             # === 3. 生成核心语句/代码补全（依赖：思路 + 框架 + 伪代码 + 叶子节点约束） ===
-            constraint_parts_core = list(constraint_parts_pseudo)
-            constraint_parts_core.append(f"【已生成的伪代码】：\n{pseudo_output}")
-            constraint_context_core = "\n\n".join(constraint_parts_core)
+            # 对标准答案做脱敏处理，防止LLM直接输出完整代码
+            constraint_parts_core_safe = []
+            if standard_answer_final:
+                constraint_parts_core_safe.append(f"【标准答案（已脱敏 - 仅供参考代码结构和算法思路，严禁直接输出完整实现）】：\n{_redact_standard_answer_for_completion(standard_answer_final)}\n【再次警告】：上述内容仅用于了解代码结构和算法方向。你输出的代码中，TODO 标记处必须只有注释说明，绝对不能包含任何实现代码。")
+            if thought_output:
+                constraint_parts_core_safe.append(f"【已生成的解题思路】：\n{thought_output}")
+            constraint_parts_core_safe.append(f"【已生成的程序框架】：\n{framework_output}")
+            constraint_parts_core_safe.append(f"【已生成的伪代码】：\n{pseudo_output}")
+            constraint_context_core = "\n\n".join(constraint_parts_core_safe)
             
             core_system_prompt = system_prompts_map.get('核心语句', '')
             todo_format = '使用 // TODO: 在这里补全代码：xxx 格式' if language == 'C' else '使用 # TODO: 在这里补全代码：xxx 格式'
             core_prompt = f"""{core_system_prompt}
 
 【重要约束 - 一致性要求】：
-你的输出必须与标准答案和前置模块的输出保持高度一致。
+你的输出必须与前置模块的输出保持高度一致。
 
-【代码补全模块特殊要求】：
-基于标准答案，生成一份带有 TODO 标记的不完整代码。
-将标准答案中2-3个关键算法部分替换为 TODO 注释标记。
+【代码补全模块特殊要求 - 严格执行】：
+生成一份带有 TODO 标记的不完整代码，其中2-3个关键算法部分被替换为 TODO 注释标记。
 {todo_format}
-只输出一份代码，不要分开展示完整代码和补全部分。
-代码补全必须与已生成的伪代码和框架逻辑严格一致。
-代码中的每个功能块必须与代码框架的叶子节点一一对应，用注释标明对应关系。
+
+【核心规则 - TODO处绝对不能有实现代码】：
+1. TODO 注释标记处只能有一行注释说明需要实现什么功能，下面不能跟任何实现代码
+2. 正确示例：
+   // TODO: 在这里补全代码：实现密钥处理功能，去除重复字母
+   （这里什么都没有，留空让学生自己写）
+3. 错误示例（绝对禁止）：
+   // TODO: 在这里补全代码：实现密钥处理功能
+   void process_key() {{  // ← 这就是泄露了完整实现！
+       ...实际代码...
+   }}
+4. 只输出一份代码，不要分开展示完整代码和补全部分
+5. 代码补全必须与已生成的伪代码和框架逻辑严格一致
+6. 代码中的每个功能块必须与代码框架的叶子节点一一对应，用注释标明对应关系
 
 {leaf_constraint_text}
 
@@ -1058,7 +1154,7 @@ def pregenerate_all():
 【题目】：
 {current_problem}
 
-请开始提供指导（确保与标准答案和代码框架叶子节点保持一致，代码的每个功能块必须与框架叶子节点一一对应）："""
+请开始提供指导（确保与代码框架叶子节点保持一致，TODO处只有注释没有实现代码）："""
 
             core_output = ""
             for piece in llm._call(core_prompt):
@@ -1351,7 +1447,7 @@ def regenerate_with_leaf_nodes():
     
     # 获取前置模块输出
     previous_outputs = get_previous_guidance_outputs(session_id, target_module)
-    constraint_context = build_constraint_context(previous_outputs, standard_answer)
+    constraint_context = build_constraint_context(previous_outputs, standard_answer, guidance_type=target_module)
     
     def generate_response():
         try:
@@ -1387,11 +1483,22 @@ def regenerate_with_leaf_nodes():
                 system_prompt = system_prompts_map.get('核心语句', '')
                 todo_format = '使用 // TODO: 在这里补全代码：xxx 格式' if language == 'C' else '使用 # TODO: 在这里补全代码：xxx 格式'
                 specific_instruction = f"""
-【代码补全模块特殊要求 - 基于最终分解结果】：
-基于标准答案，生成一份带有 TODO 标记的不完整代码。
+【代码补全模块特殊要求 - 基于最终分解结果 - 严格执行】：
+生成一份带有 TODO 标记的不完整代码。
 代码的整体结构必须与代码框架的最终分解结果（叶子节点）严格一一对应。
 {todo_format}
-只输出一份代码，不要分开展示完整代码和补全部分。
+
+【核心规则 - TODO处绝对不能有实现代码】：
+1. TODO 注释标记处只能有一行注释说明需要实现什么功能，下面不能跟任何实现代码
+2. 正确示例：
+   // TODO: 在这里补全代码：实现密钥处理功能，去除重复字母
+   （这里什么都没有，留空让学生自己写）
+3. 错误示例（绝对禁止）：
+   // TODO: 在这里补全代码：实现密钥处理功能
+   void process_key() {{  // ← 这就是泄露了完整实现！
+       ...实际代码...
+   }}
+4. 只输出一份代码，不要分开展示完整代码和补全部分
 
 【极其重要 - 结构一致性】：
 代码中的每个功能块必须与下面列出的代码框架叶子节点一一对应。
@@ -1403,7 +1510,7 @@ def regenerate_with_leaf_nodes():
             prompt = f"""{system_prompt}
 
 【重要约束 - 一致性要求】：
-你的输出必须与标准答案和代码框架的最终分解结果保持高度一致。
+你的输出必须与代码框架的最终分解结果和前置模块保持高度一致。
 代码框架已经完成了所有层级的分解，最终的叶子节点就是程序的基本构建块。
 你的输出必须与这些叶子节点一一对应。
 
@@ -1414,7 +1521,7 @@ def regenerate_with_leaf_nodes():
 【题目】：
 {current_problem}
 
-请开始生成（确保与代码框架叶子节点一一对应）："""
+请开始生成（确保与代码框架叶子节点一一对应，TODO处只有注释没有实现代码）："""
             
             full_response = ""
             for content_piece in llm._call(prompt):
