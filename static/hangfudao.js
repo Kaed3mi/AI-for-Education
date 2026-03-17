@@ -222,7 +222,7 @@ function initKnowledgeGrid() {
                             </div>
                         </div>
                         <div
-                            style="height: 28px; display: flex; justify-content: center; align-items: center; padding: 0px 10px; background-color: #85C5FF; border-radius: 28px; font-size:  16px; color: #FFFFFF;">
+                            style="height: 28px; display: none; justify-content: center; align-items: center; padding: 0px 10px; background-color: #85C5FF; border-radius: 28px; font-size:  16px; color: #FFFFFF;">
                             开始学习
                         </div>
                     </button>`;
