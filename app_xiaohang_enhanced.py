@@ -889,10 +889,13 @@ def get_guidance():
 
 @xiaohang_enhanced_bp.route('/pregenerate_all', methods=['POST'])
 def pregenerate_all():
-    """当用户点击智能审题时，后台预生成正确答案、框架、伪代码、核心语句"""
+    """后台预生成指定模块（框架、伪代码、核心语句）。可通过 modules 参数指定仅生成部分模块。"""
     session_id = session.get('xiaohang_session_id')
     if not session_id:
         return jsonify({"error": "会话未初始化"}), 400
+    
+    req_data = request.get_json(silent=True) or {}
+    modules_to_generate = req_data.get('modules', ['框架', '伪代码', '核心语句'])
     
     redis_client = get_redis_client()
     problem_key = f"xiaohang_problem:{session_id}"
@@ -1057,6 +1060,12 @@ def pregenerate_all():
             leaf_constraint_text = format_leaf_nodes_for_prompt(initial_leaf_nodes)
             
             yield json.dumps({"status": "done", "module": "框架"}) + "\n"
+            
+            # 如果仅请求生成框架，则提前结束
+            if '伪代码' not in modules_to_generate:
+                yield json.dumps({"status": "all_done"}) + "\n"
+                return
+            
             yield json.dumps({"status": "generating", "module": "伪代码"}) + "\n"
             
             # === 2. 生成伪代码（依赖：思路 + 框架 + 叶子节点约束） ===
@@ -1109,6 +1118,12 @@ def pregenerate_all():
             save_guidance_output(session_id, '伪代码', pseudo_output)
             
             yield json.dumps({"status": "done", "module": "伪代码"}) + "\n"
+            
+            # 如果不需要生成核心语句，则提前结束
+            if '核心语句' not in modules_to_generate:
+                yield json.dumps({"status": "all_done"}) + "\n"
+                return
+            
             yield json.dumps({"status": "generating", "module": "核心语句"}) + "\n"
             
             # === 3. 生成核心语句/代码补全（依赖：思路 + 框架 + 伪代码 + 叶子节点约束） ===

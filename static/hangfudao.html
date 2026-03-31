@@ -299,6 +299,45 @@
             font-size: 14px;
         }
 
+        /* 模块按钮状态徽标 */
+        .toolbar-btn {
+            position: relative;
+        }
+
+        .btn-status-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            font-size: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            border: 1.5px solid #fff;
+            line-height: 1;
+            pointer-events: none;
+        }
+
+        .btn-status-ready {
+            background: #22c55e;
+            color: #fff;
+            box-shadow: 0 0 0 2px rgba(34,197,94,0.25);
+        }
+
+        .btn-status-loading {
+            background: #f59e0b;
+            color: #fff;
+            animation: badge-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes badge-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.85); }
+        }
+
         /* 难度选择器 */
         .difficulty-selector {
             padding: 8px 28px 8px 12px;
@@ -360,6 +399,14 @@
 
         .model-selector.loopcoder {
             background-color: #2980b9;
+        }
+
+        .model-selector.loopcoder40b {
+            background-color: #2980b9;
+        }
+
+        .model-selector.loopcoder400b {
+            background-color: #e67e22;
         }
 
         .model-selector.normal {
@@ -768,6 +815,22 @@
 
         .floating-panel-btn.close:hover {
             background: #c0392b;
+        }
+
+        .floating-panel-btn.next-module {
+            width: auto;
+            padding: 0 10px;
+            background: rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 600;
+            gap: 4px;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+
+        .floating-panel-btn.next-module:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         .floating-panel-content {
@@ -2062,15 +2125,11 @@
                         <option value="中等">中等</option>
                         <option value="困难">困难</option>
                     </select>
-                    <!-- <select id="model-selector" class="model-selector loopcoder40b" onchange="onModelChange(this.value)"
+                    <select id="model-selector" class="model-selector loopcoder40b" onchange="onModelChange(this.value)"
                         style="height:34px;">
                         <option value="loopcoder40b" selected>编程模型</option>
                         <option value="loopcoder400b">思考模型</option>
-                        <option value="normal">普通模型</option>
-                        <option value="test_model" selected>编程模型</option>
-                        <option value="xhang">XHang</option>
-                        <option value="loopcoder">LoopCoder</option>
-                    </select> -->
+                    </select>
                 </div>
 
                 <div class="left-content">

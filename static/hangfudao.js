@@ -182,6 +182,12 @@ function backToSelectionPage() {
     currentGeneratingModule = null;
     isRightModuleGenerating = false;
     currentRightGeneratingType = null;
+    pregenerateStarted = false;
+    pregeneratedModules.clear();
+    pregeneratingModule = null;
+    analysisGenerated = false;
+    frameworkGenerated = false;
+    resetBackgroundCache();
 
     // 重新渲染知识点网格
     initKnowledgeGrid();
@@ -404,6 +410,7 @@ async function switchHomeworkProblem(newIdx) {
     pregeneratingModule = null;
     analysisGenerated = false;
     frameworkGenerated = false;
+    resetBackgroundCache();
     
     // 7. 清理 Mermaid 残留
     if (typeof cleanupMermaidErrors === 'function') cleanupMermaidErrors();
@@ -457,6 +464,8 @@ async function storeHomeworkProblemToBackend(problem) {
             credentials: 'include',
             body: JSON.stringify({ problem_text: problem.description })
         });
+        // 作业题目存入后端后，立即启动后台自动预生成链（智能审题 → 代码框架）
+        triggerBackgroundChain();
     } catch (e) {
         console.error('存储作业题目失败:', e);
     }
@@ -736,6 +745,21 @@ function preprocessMermaidCode(code) {
     // 这是 Mermaid 官方支持的转义方式，可以安全处理所有特殊字符
     processed = wrapNodeTextWithQuotes(processed);
     
+    // 确保 style/classDef/class 语句在独立行（修复 AI 将其与节点定义放在同一行的问题）
+    {
+        const splitLines = [];
+        processed.split('\n').forEach(line => {
+            const m = line.match(/^(\s*\S.*?)\s{2,}((style|classDef|class)\s+\w.*)$/i);
+            if (m) {
+                splitLines.push(m[1]);
+                splitLines.push(m[2]);
+            } else {
+                splitLines.push(line);
+            }
+        });
+        processed = splitLines.join('\n');
+    }
+
     // 修复未闭合的箭头标签 |xxx 但没有 |
     let lines = processed.split('\n');
     lines = lines.map(line => {
@@ -1149,6 +1173,7 @@ async function generateProblem() {
     pregeneratingModule = null;
     analysisGenerated = false;
     frameworkGenerated = false;
+    resetBackgroundCache();
     
     try {
         const response = await fetch(`${API_PREFIX}/xiaohang/generate_problem`, {
@@ -1175,6 +1200,8 @@ async function generateProblem() {
         
         problemContent = fullText;
         highlightCode(display);
+        // 题目生成完成，启动后台自动预生成链
+        triggerBackgroundChain();
         
     } catch (error) {
         console.error('Error:', error);
@@ -1193,6 +1220,17 @@ let pregeneratedModules = new Set();  // 已预生成完成的模块
 let pregeneratingModule = null;  // 当前正在预生成的模块
 let analysisGenerated = false;  // 智能审题是否已生成完成
 let frameworkGenerated = false;  // 代码框架是否已生成（用于控制伪代码/代码补全的前置条件）
+
+// 后台自动预生成缓存（无需用户点击，在题目/模块完成后自动触发）
+let bgAnalysisText = null;       // 智能审题后台预生成内容
+let bgAnalysisCompleted = false; // 智能审题是否完成
+let bgAnalysisStarted = false;   // 智能审题是否已开始
+let bgAnswerText = null;         // 正确答案后台预生成内容
+let bgAnswerCompleted = false;   // 正确答案是否完成
+let bgAnswerStarted = false;     // 正确答案是否已开始
+let bgCoreText = null;           // 代码补全后台预生成内容
+let bgCoreCompleted = false;     // 代码补全是否完成
+let bgCoreStarted = false;       // 代码补全是否已开始
 
 // 锁定模块按钮
 function lockModuleButtons(currentType) {
@@ -1232,9 +1270,13 @@ function showContent(type) {
         return;
     }
     
-    // 框架、伪代码、核心语句、正确答案 必须先点击智能审题
+    // 框架、伪代码、核心语句、正确答案 必须先等智能审题完成
     if (['框架', '伪代码', '核心语句', '正确答案'].includes(type) && !analysisGenerated) {
-        alert('请先点击「智能审题」生成分析内容');
+        if (bgAnalysisStarted) {
+            alert('智能审题正在后台生成中，请稍候后再点击');
+        } else {
+            alert('请先点击「智能审题」生成分析内容');
+        }
         return;
     }
     
@@ -1319,18 +1361,51 @@ function showContent(type) {
     panelIdByType.set(config.title, currentPanelId);
     
     if (type === '思路') {
-        // 智能审题：流式生成，完成后触发后台预生成其他模块
-        getGuidanceToFloatingWithPregenerate(type);
+        if (bgAnalysisCompleted && bgAnalysisText) {
+            // 后台已预生成完成，直接加载内容
+            loadBgContentToPanel('思路', currentPanelId);
+        } else if (bgAnalysisStarted) {
+            // 后台正在生成，显示等待态，待完成后自动刷新
+            const display = getFloatingPanelContent();
+            if (display) display.innerHTML = '<p class="loading">正在生成智能审题，请稍候...</p>';
+            panelStreamBuffers.set(currentPanelId, { fullText: '', type: '思路', completed: false, waitingForBg: true });
+            currentGuidanceType = '思路';
+        } else {
+            // 未启动后台生成（兜底），执行原有流式生成
+            getGuidanceToFloatingWithPregenerate(type);
+        }
     } else if (type === '正确答案') {
-        // 正确答案：检查是否已有缓存
-        getCorrectAnswerToFloating();
+        if (!homeworkMode && bgAnswerCompleted && bgAnswerText) {
+            // 后台已预生成完成（知识点模式），直接加载
+            loadBgContentToPanel('正确答案', currentPanelId);
+        } else if (!homeworkMode && bgAnswerStarted && !bgAnswerCompleted) {
+            // 后台正在生成，显示等待态
+            const display = getFloatingPanelContent();
+            if (display) display.innerHTML = '<p class="loading">正在获取正确答案，请稍候...</p>';
+            panelStreamBuffers.set(currentPanelId, { fullText: '', type: '正确答案', completed: false, waitingForBg: true });
+            currentGuidanceType = '正确答案';
+        } else {
+            // 作业模式或未启动后台生成，使用原有逻辑
+            getCorrectAnswerToFloating();
+        }
     } else if (['框架', '伪代码', '核心语句'].includes(type)) {
         if (type === '框架') {
             // 框架：使用预生成内容
             getPregeneratedContent(type);
+        } else if (type === '核心语句' && bgCoreCompleted && bgCoreText) {
+            // 代码补全：后台已预生成完成，直接加载
+            loadBgContentToPanel('核心语句', currentPanelId);
+        } else if (type === '核心语句' && bgCoreStarted && !bgCoreCompleted) {
+            // 代码补全：后台正在生成，显示等待态
+            const display = getFloatingPanelContent();
+            if (display) display.innerHTML = '<p class="loading">正在生成代码补全，请稍候...</p>';
+            panelStreamBuffers.set(currentPanelId, { fullText: '', type: '核心语句', completed: false, waitingForBg: true });
+            currentGuidanceType = '核心语句';
+            if (AVATAR_FOLLOWUP_MODULES.includes('核心语句') && typeof showFloatingAvatar === 'function') {
+                showFloatingAvatar('核心语句');
+            }
         } else {
-            // 伪代码/核心语句：基于最新框架分解的叶子节点重新生成
-            // regenerateModuleWithLeafNodes 内部会自行管理面板的创建
+            // 伪代码/核心语句（未后台预生成）：基于最新框架分解重新生成
             regenerateModuleWithLeafNodes(type === '伪代码' ? '伪代码' : '核心语句');
             return;
         }
@@ -1395,6 +1470,304 @@ async function triggerPregenerate() {
         }
     } catch (error) {
         console.error('预生成出错:', error);
+    }
+}
+
+// ==================== 后台自动预生成链 ====================
+
+// 清空后台预生成缓存（切换题目/模型时调用）
+function resetBackgroundCache() {
+    bgAnalysisText = null;
+    bgAnalysisCompleted = false;
+    bgAnalysisStarted = false;
+    bgAnswerText = null;
+    bgAnswerCompleted = false;
+    bgAnswerStarted = false;
+    bgCoreText = null;
+    bgCoreCompleted = false;
+    bgCoreStarted = false;
+    resetAllModuleButtonStatuses();
+}
+
+// 更新左侧工具栏模块按钮的状态徽标
+// status: 'ready'(绿点·已就绪) | 'loading'(橙点·生成中) | 'default'(无徽标)
+function updateModuleButtonStatus(type, status) {
+    const btn = document.querySelector(`.left-toolbar-buttons .toolbar-btn[data-type="${type}"]`);
+    if (!btn) return;
+    const existing = btn.querySelector('.btn-status-badge');
+    if (existing) existing.remove();
+    if (status === 'default') return;
+    const badge = document.createElement('span');
+    badge.className = `btn-status-badge btn-status-${status}`;
+    badge.title = status === 'ready' ? '已就绪，点击即现' : '后台生成中...';
+    btn.appendChild(badge);
+}
+
+// 重置所有模块按钮徽标（切换题目/模型时调用）
+function resetAllModuleButtonStatuses() {
+    ['思路', '框架', '伪代码', '核心语句'].forEach(t => updateModuleButtonStatus(t, 'default'));
+}
+
+// 启动后台自动预生成链
+// 知识点模式：正确答案 & 智能审题 同时并行启动 → 代码框架
+// 作业模式：智能审题 → 代码框架
+function triggerBackgroundChain() {
+    if (homeworkMode) {
+        bgGenerateAnalysis();
+    } else {
+        bgGenerateAnswer();   // 不 await，并行启动
+        bgGenerateAnalysis(); // 同时开始，不等答案完成
+    }
+}
+
+// 后台生成正确答案（知识点模式）
+async function bgGenerateAnswer() {
+    if (bgAnswerStarted) return;
+    bgAnswerStarted = true;
+    console.log('[后台预生成] 开始生成正确答案...');
+    try {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_correct_answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include'
+        });
+        if (!response.ok) throw new Error('后台生成正确答案失败');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullText += decoder.decode(value);
+            bgAnswerText = fullText;
+        }
+        bgAnswerText = fullText;
+        bgAnswerCompleted = true;
+        console.log('[后台预生成] 正确答案完成');
+        refreshWaitingBgPanel('正确答案');
+    } catch (error) {
+        console.error('[后台预生成] 正确答案失败:', error);
+        bgAnswerStarted = false;
+    }
+}
+
+// 后台生成智能审题（两种模式通用）
+async function bgGenerateAnalysis() {
+    if (bgAnalysisStarted) return;
+    bgAnalysisStarted = true;
+    updateModuleButtonStatus('思路', 'loading');
+    console.log('[后台预生成] 开始生成智能审题...');
+    try {
+        const response = await fetch(`${API_PREFIX}/xiaohang/get_guidance`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ type: '思路' })
+        });
+        if (!response.ok) throw new Error('后台生成智能审题失败');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullText += decoder.decode(value);
+            bgAnalysisText = fullText;
+            refreshWaitingBgPanel('思路');
+        }
+        bgAnalysisText = fullText;
+        bgAnalysisCompleted = true;
+        analysisGenerated = true;
+        updateModuleButtonStatus('思路', 'ready');
+        console.log('[后台预生成] 智能审题完成');
+        refreshWaitingBgPanel('思路');
+        triggerPregenerateFramework();
+    } catch (error) {
+        console.error('[后台预生成] 智能审题失败:', error);
+        bgAnalysisStarted = false;
+        updateModuleButtonStatus('思路', 'default');
+    }
+}
+
+// 后台生成代码补全（伪代码完成后自动触发）
+async function bgGenerateCore() {
+    if (bgCoreStarted) return;
+    bgCoreStarted = true;
+    updateModuleButtonStatus('核心语句', 'loading');
+    console.log('[后台预生成] 开始生成代码补全...');
+    try {
+        const response = await fetch(`${API_PREFIX}/xiaohang/regenerate_with_leaf_nodes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ module: '核心语句' })
+        });
+        if (!response.ok) throw new Error('后台生成代码补全失败');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullText += decoder.decode(value);
+            bgCoreText = fullText;
+            refreshWaitingBgPanel('核心语句');
+        }
+        bgCoreText = fullText;
+        bgCoreCompleted = true;
+        updateModuleButtonStatus('核心语句', 'ready');
+        console.log('[后台预生成] 代码补全完成');
+        refreshWaitingBgPanel('核心语句');
+    } catch (error) {
+        console.error('[后台预生成] 代码补全失败:', error);
+        bgCoreStarted = false;
+        updateModuleButtonStatus('核心语句', 'default');
+    }
+}
+
+// 刷新正在等待后台预生成内容的面板（流式和完成时均调用）
+async function refreshWaitingBgPanel(type) {
+    const titleMap = { '思路': '智能审题', '正确答案': '正确答案', '核心语句': '代码补全' };
+    const title = titleMap[type];
+    if (!title) return;
+
+    const panelId = panelIdByType.get(title);
+    if (!panelId) return;
+
+    const buffer = panelStreamBuffers.get(panelId);
+    if (!buffer || !buffer.waitingForBg) return;
+
+    const panelEl = document.getElementById(`floating-panel-${panelId}`);
+    const contentEl = panelEl ? panelEl.querySelector('.floating-panel-content') : null;
+    if (!contentEl) return;
+
+    const textMap = { '思路': bgAnalysisText, '正确答案': bgAnswerText, '核心语句': bgCoreText };
+    const completedMap = { '思路': bgAnalysisCompleted, '正确答案': bgAnswerCompleted, '核心语句': bgCoreCompleted };
+    const text = textMap[type] || '';
+    const completed = completedMap[type];
+
+    buffer.fullText = text;
+
+    if (completed) {
+        buffer.completed = true;
+        buffer.waitingForBg = false;
+        await _renderBgContentToDisplay(type, text, contentEl, panelId);
+        showFollowUpInput(contentEl);
+        saveCurrentPanelState();
+    } else if (text) {
+        // 实时流式预览：已到达的内容片段直接渲染，不等完成
+        contentEl.innerHTML = renderMarkdown(text);
+        highlightCode(contentEl);
+        // 底部显示流式生成指示条
+        const indicator = contentEl.querySelector('.stream-indicator');
+        if (!indicator) {
+            const bar = document.createElement('div');
+            bar.className = 'stream-indicator';
+            bar.style.cssText = 'margin-top:12px;padding:6px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:6px;';
+            bar.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:badge-pulse 1.2s ease-in-out infinite;"></span>正在生成中...';
+            contentEl.appendChild(bar);
+        }
+    } else {
+        contentEl.innerHTML = '<p class="loading">正在生成内容，请稍候...</p>';
+    }
+}
+
+// 将后台预生成的内容渲染到面板中（点击时或等待完成时调用）
+async function loadBgContentToPanel(type, targetPanelId) {
+    const getTargetDisplay = () => {
+        const panelEl = document.getElementById(`floating-panel-${targetPanelId}`);
+        return panelEl ? panelEl.querySelector('.floating-panel-content') : null;
+    };
+    const display = getTargetDisplay();
+    if (!display) return;
+
+    const textMap = { '思路': bgAnalysisText, '正确答案': bgAnswerText, '核心语句': bgCoreText };
+    const text = textMap[type];
+    if (!text) return;
+
+    display.innerHTML = '<p class="loading">正在渲染内容...</p>';
+    panelStreamBuffers.set(targetPanelId, { fullText: text, type: type, completed: true, waitingForBg: false });
+    currentGuidanceType = type;
+
+    const finalDisplay = getTargetDisplay();
+    if (finalDisplay) {
+        await _renderBgContentToDisplay(type, text, finalDisplay, targetPanelId);
+        showFollowUpInput(finalDisplay);
+        saveCurrentPanelState();
+    }
+}
+
+// 内部：根据模块类型渲染后台内容到指定 DOM 元素
+async function _renderBgContentToDisplay(type, text, contentEl, panelId) {
+    if (type === '思路') {
+        if (AVATAR_FOLLOWUP_MODULES.includes('思路') && typeof showFloatingAvatar === 'function') {
+            showFloatingAvatar('思路');
+        }
+        await renderAnalysisContent(text, contentEl);
+    } else if (type === '正确答案') {
+        contentEl.innerHTML = renderMarkdown(text);
+        highlightCode(contentEl);
+        addAnswerCopyButton(contentEl, text);
+    } else if (type === '核心语句') {
+        contentEl.innerHTML = renderMarkdown(text);
+        highlightCode(contentEl);
+        highlightTodoMarkers(contentEl);
+    }
+}
+
+// 仅预生成代码框架（智能审题完成后触发）
+async function triggerPregenerateFramework() {
+    if (pregenerateStarted) return;
+    pregenerateStarted = true;
+    pregeneratedModules.clear();
+    pregeneratingModule = null;
+
+    updateModuleButtonStatus('框架', 'loading');
+    console.log('[预生成] 开始预生成代码框架...');
+    try {
+        const response = await fetch(`${API_PREFIX}/xiaohang/pregenerate_all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ modules: ['框架'] })
+        });
+        if (!response.ok) {
+            console.error('代码框架预生成请求失败');
+            return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value);
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const msg = JSON.parse(line);
+                    if (msg.status === 'generating') {
+                        pregeneratingModule = msg.module;
+                        console.log(`[预生成] 正在生成: ${msg.module}`);
+                    } else if (msg.status === 'done') {
+                        pregeneratedModules.add(msg.module);
+                        pregeneratingModule = null;
+                        console.log(`[预生成] 完成: ${msg.module}`);
+                        if (msg.module === '框架') updateModuleButtonStatus('框架', 'ready');
+                        refreshWaitingPanel(msg.module);
+                    } else if (msg.status === 'all_done') {
+                        console.log('[预生成] 代码框架预生成完成');
+                    } else if (msg.status === 'error') {
+                        console.error('[预生成] 错误:', msg.message);
+                    }
+                } catch (e) {}
+            }
+        }
+    } catch (error) {
+        console.error('代码框架预生成出错:', error);
+        updateModuleButtonStatus('框架', 'default');
     }
 }
 
@@ -1608,9 +1981,9 @@ async function getGuidanceToFloatingWithPregenerate(type) {
             }
         }
         
-        // 智能审题完成，标记并触发预生成
+        // 智能审题完成，标记并触发框架预生成
         analysisGenerated = true;
-        triggerPregenerate();
+        triggerPregenerateFramework();
         
     } catch (error) {
         console.error('Error:', error);
@@ -2910,6 +3283,7 @@ async function onDifficultyChange(newDifficulty) {
         pregeneratingModule = null;
         analysisGenerated = false;
         frameworkGenerated = false;
+        resetBackgroundCache();
         
         // 7. 清理 Mermaid 残留
         if (typeof cleanupMermaidErrors === 'function') {
@@ -2961,6 +3335,48 @@ async function onModelChange(newModel) {
         currentModel = newModel;
         const selector = document.getElementById('model-selector');
         selector.className = 'model-selector ' + newModel;
+        
+        // 切换模型后，清理所有预生成缓存并关闭已生成的面板，然后重新启动后台预生成链
+        if (problemContent) {
+            // 1. 中止所有进行中的请求
+            for (const [, controller] of activeAbortControllers) {
+                try { controller.abort(); } catch(e) {}
+            }
+            activeAbortControllers.clear();
+            
+            // 2. 关闭所有浮动面板
+            for (const panelId of Array.from(floatingPanels.keys())) {
+                const panelEl = document.getElementById(`floating-panel-${panelId}`);
+                if (panelEl) panelEl.remove();
+            }
+            floatingPanels.clear();
+            panelIdByType.clear();
+            panelStreamBuffers.clear();
+            panelContentReady.clear();
+            currentPanelId = null;
+            activePanelId = null;
+            floatingPanelVisible = false;
+            panelZIndexCounter = 1000;
+            renderBubbles();
+            closeFollowupChat();
+            hideFloatingAvatar();
+            followupChatHistory = {};
+            currentGuidanceType = null;
+            isModuleGenerating = false;
+            currentGeneratingModule = null;
+            unlockModuleButtons();
+            
+            // 3. 重置预生成状态和后台缓存
+            pregenerateStarted = false;
+            pregeneratedModules.clear();
+            pregeneratingModule = null;
+            analysisGenerated = false;
+            frameworkGenerated = false;
+            resetBackgroundCache();
+            
+            // 4. 重新启动后台预生成链（使用新模型重新生成）
+            triggerBackgroundChain();
+        }
         
     } catch (error) {
         console.error('Error:', error);
@@ -4096,7 +4512,8 @@ async function regenerateModuleWithLeafNodes(moduleType) {
     panelStreamBuffers.set(targetPanelId, { fullText: '', type: moduleType, completed: false });
     
     display.innerHTML = '<p class="loading">正在基于最终分解结果重新生成...</p>';
-    
+    updateModuleButtonStatus(moduleType === '核心语句' ? '核心语句' : '伪代码', 'loading');
+
     try {
         const response = await fetch(`${API_PREFIX}/xiaohang/regenerate_with_leaf_nodes`, {
             method: 'POST',
@@ -4151,8 +4568,16 @@ async function regenerateModuleWithLeafNodes(moduleType) {
             saveCurrentPanelState();
         }
         
+        updateModuleButtonStatus(moduleType === '核心语句' ? '核心语句' : '伪代码', 'ready');
+
+        // 伪代码生成完成后，后台自动开始生成代码补全
+        if (moduleType === '伪代码') {
+            bgGenerateCore();
+        }
+        
     } catch (error) {
         console.error('重新生成失败:', error);
+        updateModuleButtonStatus(moduleType === '核心语句' ? '核心语句' : '伪代码', 'default');
         if (display) {
             display.innerHTML = '<p style="color: #e74c3c;">重新生成失败，请重试</p>';
         }
@@ -4303,6 +4728,36 @@ const PSEUDO_KEYWORDS = [
     'function', 'procedure', 'call', 'Algorithm', 'Input', 'Output',
     'and', 'or', 'not', 'true', 'false', 'null', 'nil'
 ];
+
+// 向 highlight.js 注册伪代码语言，消除 "could not find language" 警告
+if (typeof hljs !== 'undefined') {
+    const pseudocodeDef = function(hljs) {
+        return {
+            keywords: {
+                keyword: PSEUDO_KEYWORDS.join(' ')
+            },
+            contains: [
+                hljs.COMMENT('//', '$'),
+                hljs.QUOTE_STRING_MODE,
+                hljs.C_NUMBER_MODE
+            ]
+        };
+    };
+    hljs.registerLanguage('pseudocode', pseudocodeDef);
+    hljs.registerLanguage('pse', pseudocodeDef);
+    hljs.registerLanguage('pseud', pseudocodeDef);
+    hljs.registerLanguage('mermaid', function(hljs) {
+        return {
+            keywords: {
+                keyword: 'graph flowchart sequenceDiagram classDiagram stateDiagram erDiagram gantt pie gitGraph subgraph end style classDef if else loop alt opt par and note over'
+            },
+            contains: [
+                hljs.COMMENT('%%', '$'),
+                hljs.QUOTE_STRING_MODE
+            ]
+        };
+    });
+}
 
 // 对伪代码文本进行语法高亮
 function highlightPseudocodeSyntax(line) {
@@ -4971,6 +5426,23 @@ function openFloatingPanel(icon, title) {
     const titleEl = panelEl.querySelector('.floating-panel-title-text');
     iconEl.textContent = icon;
     titleEl.textContent = title;
+
+    // 注入「进入下一模块」快捷按钮
+    const nextModuleMap = {
+        '智能审题': { label: '代码框架 →', type: '框架' },
+        '代码框架':  { label: '伪代码 →',   type: '伪代码' },
+        '伪代码':    { label: '代码补全 →',  type: '核心语句' }
+    };
+    const nextInfo = nextModuleMap[title];
+    if (nextInfo) {
+        const controls = panelEl.querySelector('.floating-panel-controls');
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'floating-panel-btn next-module';
+        nextBtn.textContent = nextInfo.label;
+        nextBtn.title = `打开「${nextInfo.label.replace(' →', '')}」`;
+        nextBtn.onclick = () => showContent(nextInfo.type);
+        controls.insertBefore(nextBtn, controls.firstChild);
+    }
     
     // 设置位置和大小
     panelEl.style.left = position.left + 'px';
@@ -5939,6 +6411,7 @@ function startCustomProblem() {
     pregeneratingModule = null;
     analysisGenerated = false;
     frameworkGenerated = false;
+    resetBackgroundCache();
 
     if (typeof cleanupMermaidErrors === 'function') cleanupMermaidErrors();
 
@@ -6019,12 +6492,14 @@ async function confirmCustomProblem() {
         display.innerHTML = renderMarkdown(text);
         highlightCode(display);
 
-        // 重置预生成状态
+        // 重置预生成状态和后台缓存，并启动后台自动预生成链
         pregenerateStarted = false;
         pregeneratedModules.clear();
         pregeneratingModule = null;
         analysisGenerated = false;
         frameworkGenerated = false;
+        resetBackgroundCache();
+        triggerBackgroundChain();
 
         alert('题目设置成功！你现在可以使用所有功能了。');
         isCustomProblemMode = false;

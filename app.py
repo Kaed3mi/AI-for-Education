@@ -140,6 +140,16 @@ MODEL_ENDPOINTS = {
         "url": "https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model-40b/1/8010/v1/chat/completions",
         "model": "LoopCoder-40B-beta",
     },
+    "loopcoder40b": {
+        "name": "编程模型（LoopCoder-40B）",
+        "url": "https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model-40b/1/8010/v1/chat/completions",
+        "model": "LoopCoder-40B-beta",
+    },
+    "loopcoder400b": {
+        "name": "思考模型（LoopCoder-400B）",
+        "url": "https://siflow-auriga.siflow.cn/siflow/auriga/24053828ef/data-structure-model/1/8010/v1/chat/completions",
+        "model": "LoopCoder-400B-beta",
+    },
 }
 
 # from call_models import stream_chat_completion
