@@ -203,7 +203,8 @@
             <div class="problem-info">
                 <span class="problem-title" id="problem-title">加载题目中...</span>
                 <span class="progress-pill">
-                    <span class="done" id="done-count">0</span>/<span id="total-count">0</span> 模块
+                    <!-- ORIGINAL: <span class="done" id="done-count">0</span>/<span id="total-count">0</span> 模块 -->
+                    <span class="done" id="done-count" style="display:none">0</span>共 <span id="total-count">0</span> 个 模块
                 </span>
             </div>
         </div>
@@ -868,7 +869,7 @@
     </main>
 
     <!-- 引入 JS -->
-    <script src="/static/framework_studio.js"></script>
+    <script src="/static/framework_studio.js?v=20260331"></script>
     
     <!-- 内联初始化脚本 -->
     <script>

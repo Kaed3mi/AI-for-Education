@@ -3759,7 +3759,8 @@ const FrameworkSystem = {
         // 更新进度显示
         const progressEl = document.getElementById('framework-progress');
         if (progressEl) {
-            progressEl.textContent = `${completed}/${total} 模块`;
+            // ORIGINAL: progressEl.textContent = `${completed}/${total} 模块`;
+            progressEl.textContent = `共 ${total} 个 模块`;
         }
     }
 };
@@ -3788,7 +3789,7 @@ function renderInteractiveFramework(data, container) {
     let html = `
     <div class="framework-container" style="padding: 0;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding: 12px 16px; background: #f8fafc; border-radius: 10px;">
-            <span style="font-size: 14px; color: #64748b;">📊 进度：<strong id="framework-progress" style="color: #2563EB;">0/1 模块</strong></span>
+            <span style="font-size: 14px; color: #64748b;">📊 进度：<strong id="framework-progress" style="color: #2563EB;">共 1 个 模块</strong></span>
             <div style="display: flex; gap: 8px; align-items: center;">
                 <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(52,152,219,0.12); border: 1px solid rgba(52,152,219,0.3); border-radius: 6px; font-size: 12px; color: #3498db; font-weight: 600;">📋 顺序结构</span>
                 <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(39,174,96,0.12); border: 1px solid rgba(39,174,96,0.3); border-radius: 6px; font-size: 12px; color: #27ae60; font-weight: 600;">🔄 循环结构</span>
@@ -3920,9 +3921,12 @@ function createFrameworkCardHtml(cardData) {
             
             <!-- 交互决策区 -->
             <div class="fcard-gate" id="fgate-${cardData.id}" style="background: #f8fafc; border-radius: 10px; padding: 16px; text-align: center; border: 1px dashed #e2e8f0;">
-                <div style="font-size: 14px; color: #334155; margin-bottom: 12px;">基于上述逻辑结构，你能写出 <strong style="color: #2563EB;">${FrameworkSystem.escapeHtml(cardData.name)}</strong> 的代码吗？</div>
+                <div style="font-size: 14px; color: #334155; margin-bottom: 12px;">你要继续分解 <strong style="color: #2563EB;">${FrameworkSystem.escapeHtml(cardData.name)}</strong> 的代码吗？</div>
                 <div style="display: flex; justify-content: center; gap: 12px;">
+                    <!-- ORIGINAL: 基于上述逻辑结构，你能写出...的代码吗？ -->
+                    <!-- COMMENTED OUT:
                     <button onclick="markFrameworkCanWrite('${cardData.id}')" style="padding: 10px 24px; background: #22c55e; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;">✅ 能，我可以写</button>
+                    -->
                     <button onclick="continueFrameworkDecompose('${cardData.id}')" style="padding: 10px 24px; background: white; color: #f59e0b; border: 2px solid #f59e0b; border-radius: 8px; font-weight: 600; cursor: pointer;">🔍 不能，继续分解</button>
                 </div>
             </div>
@@ -4349,16 +4353,22 @@ function createFrameworkSubCardHtml(cardData) {
     
     const gateHtml = cardData.needsFurtherDecomposition ? `
         <div class="fcard-gate" id="fgate-${cardData.id}" style="background: #f8fafc; border-radius: 10px; padding: 14px; text-align: center; border: 1px dashed #e2e8f0;">
-            <div style="font-size: 13px; color: #334155; margin-bottom: 10px;">你能写出 <strong style="color: #2563EB;">${FrameworkSystem.escapeHtml(cardData.name)}</strong> 的代码吗？</div>
+            <div style="font-size: 13px; color: #334155; margin-bottom: 10px;">你要继续分解 <strong style="color: #2563EB;">${FrameworkSystem.escapeHtml(cardData.name)}</strong> 的代码吗？</div>
             <div style="display: flex; justify-content: center; gap: 10px;">
+                <!-- ORIGINAL: 你能写出...的代码吗？ -->
+                <!-- COMMENTED OUT:
                 <button onclick="markFrameworkCanWrite('${cardData.id}')" style="padding: 8px 20px; background: #22c55e; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;">✅ 能</button>
+                -->
                 <button onclick="continueFrameworkDecompose('${cardData.id}')" style="padding: 8px 20px; background: white; color: #f59e0b; border: 2px solid #f59e0b; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;">🔍 继续分解</button>
             </div>
         </div>
     ` : `
         <div class="fcard-gate" id="fgate-${cardData.id}" style="background: #f0fdf4; border-radius: 10px; padding: 14px; text-align: center; border: 1px solid #bbf7d0;">
-            <div style="font-size: 13px; color: #166534; margin-bottom: 10px;">✨ 该模块已足够简单，可以直接编写代码</div>
+            <!-- ORIGINAL: ✨ 该模块已足够简单，可以直接编写代码 -->
+            <div style="font-size: 13px; color: #166534; margin-bottom: 10px;">该模块已足够简单，无需分解</div>
+            <!-- COMMENTED OUT:
             <button onclick="markFrameworkCanWrite('${cardData.id}')" style="padding: 8px 20px; background: #22c55e; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;">✅ 开始编写</button>
+            -->
             ${codeHintHtml}
         </div>
     `;

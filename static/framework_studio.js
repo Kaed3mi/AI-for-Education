@@ -220,12 +220,15 @@ const FrameworkStudio = {
                 <!-- 区域③：交互决策区 -->
                 <div class="confidence-gate" id="gate-${cardData.id}">
                     <div class="gate-question">
-                        基于上述逻辑结构，你现在能写出 <em>${this.escapeHtml(cardData.name)}</em> 的代码吗？
+                        你要继续分解 <em>${this.escapeHtml(cardData.name)}</em> 的代码吗？
                     </div>
                     <div class="gate-buttons">
+                        <!-- ORIGINAL: 基于上述逻辑结构，你现在能写出...的代码吗？ -->
+                        <!-- COMMENTED OUT:
                         <button class="gate-btn can-write" onclick="FrameworkStudio.markAsCanWrite('${cardData.id}')">
                             ✅ 能，我可以写出来
                         </button>
+                        -->
                         <button class="gate-btn cannot-write" onclick="FrameworkStudio.continueDecompose('${cardData.id}')">
                             🔍 不能，继续分解
                         </button>
@@ -693,12 +696,15 @@ const FrameworkStudio = {
         const gateHtml = cardData.needsFurtherDecomposition ? `
             <div class="confidence-gate" id="gate-${cardData.id}">
                 <div class="gate-question">
-                    你能写出 <em>${this.escapeHtml(cardData.name)}</em> 的代码吗？
+                    你要继续分解 <em>${this.escapeHtml(cardData.name)}</em> 的代码吗？
                 </div>
                 <div class="gate-buttons">
+                    <!-- ORIGINAL: 你能写出...的代码吗？ -->
+                    <!-- COMMENTED OUT:
                     <button class="gate-btn can-write" onclick="FrameworkStudio.markAsCanWrite('${cardData.id}')">
                         ✅ 能
                     </button>
+                    -->
                     <button class="gate-btn cannot-write" onclick="FrameworkStudio.continueDecompose('${cardData.id}')">
                         🔍 继续分解
                     </button>
@@ -707,12 +713,15 @@ const FrameworkStudio = {
         ` : `
             <div class="confidence-gate" id="gate-${cardData.id}" style="background: #f0fdf4; border-color: #22c55e;">
                 <div class="gate-question" style="color: #166534;">
-                    ✨ 该模块已足够简单，可以直接编写代码
+                    <!-- ORIGINAL: ✨ 该模块已足够简单，可以直接编写代码 -->
+                    该模块已足够简单，无需分解
                 </div>
                 <div class="gate-buttons">
+                    <!-- COMMENTED OUT:
                     <button class="gate-btn can-write" onclick="FrameworkStudio.markAsCanWrite('${cardData.id}')">
                         ✅ 开始编写
                     </button>
+                    -->
                 </div>
                 ${codeHintHtml}
             </div>
