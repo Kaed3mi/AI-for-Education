@@ -1,4 +1,4 @@
-from langchain.llms.base import LLM
+from langchain_core.language_models.llms import LLM
 from typing import Optional, List, Any
 import requests
 import json
@@ -330,7 +330,9 @@ class OpenAIServerModel(LLM):
 
 def get_llm(model_name: str = "xhang") -> LLM:
     """根据模型名称返回对应的LLM实例"""
-    if model_name == "loopcoder":
+    if model_name == "loopcoder400b":
+        return LoopCoderLLM2()
+    elif model_name == "loopcoder":
         return LoopCoderLLM()
     elif model_name == "normal":
         return NormalLLM()

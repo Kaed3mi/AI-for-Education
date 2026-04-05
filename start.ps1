@@ -1,9 +1,11 @@
-# Docker 快速启动脚本
-# 使用方法：在 PowerShell 中运行 .\start.ps1
+# Docker 启动脚本
+# 本地直接运行请使用 .\start_local.ps1
 
 Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "  Flask AI Assistant - Docker 启动  " -ForegroundColor Cyan
+Write-Host "  AI-for-Education - Docker 启动    " -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "提示：如果你要本地直跑 Python，请使用 .\start_local.ps1" -ForegroundColor Yellow
 Write-Host ""
 
 # 检查 Docker 是否运行

@@ -84,6 +84,13 @@ with app.app_context():
 from app_xiaohang_enhanced import xiaohang_enhanced_bp
 app.register_blueprint(xiaohang_enhanced_bp)
 
+# ---------------------- 引入 Admin 管理后台 ----------------------
+try:
+    from admin.admin_panel import admin_bp
+    app.register_blueprint(admin_bp)
+except ImportError as e:
+    print(f"Warning: Failed to import admin_bp: {e}")
+
 # ---------------------- 引入 Teaching Agent 模块 ----------------------
 try:
     from app_teaching import teaching_bp

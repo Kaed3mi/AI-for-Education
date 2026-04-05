@@ -15,6 +15,7 @@ import json
 import uuid
 import time
 import os
+import random
 
 # 创建Blueprint
 xiaohang_enhanced_bp = Blueprint('xiaohang_enhanced', __name__, url_prefix='/api/xiaohang')
@@ -34,6 +35,22 @@ DIFFICULTY_PROMPTS = {
     "困难": "设计一道困难难度的编程题，需要深入理解算法原理，考查优化和复杂场景处理能力。"
 }
 
+LOCAL_PROBLEM_BANK_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "app_pregenerator", "problem_bank.json"
+)
+HOMEWORK_GUIDANCE_BANK_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "app_pregenerator", "homework_guidance_bank.json"
+)
+LOCAL_BANK_CACHE = {
+    "mtime": None,
+    "items": []
+}
+HOMEWORK_BANK_CACHE = {
+    "mtime": None,
+    "items": [],
+    "by_key": {}
+}
+
 # 模块依赖关系定义
 GUIDANCE_DEPENDENCIES = {
     '思路': [],                          # 思路无依赖，直接基于标准答案
@@ -41,6 +58,149 @@ GUIDANCE_DEPENDENCIES = {
     '伪代码': ['思路', '框架'],            # 伪代码依赖思路和框架（智能审题+代码框架）
     '核心语句': ['思路', '框架', '伪代码']  # 核心语句依赖所有前置模块
 }
+
+
+def load_local_problem_bank():
+    """加载本地预生成题库，并基于文件修改时间做轻量缓存。"""
+    if not os.path.exists(LOCAL_PROBLEM_BANK_PATH):
+        return []
+
+    try:
+        mtime = os.path.getmtime(LOCAL_PROBLEM_BANK_PATH)
+        if LOCAL_BANK_CACHE["mtime"] == mtime and LOCAL_BANK_CACHE["items"]:
+            return LOCAL_BANK_CACHE["items"]
+
+        with open(LOCAL_PROBLEM_BANK_PATH, "r", encoding="utf-8") as f:
+            items = json.load(f)
+
+        if not isinstance(items, list):
+            items = []
+
+        LOCAL_BANK_CACHE["mtime"] = mtime
+        LOCAL_BANK_CACHE["items"] = items
+        return items
+    except Exception as e:
+        print(f"[LocalBank] 加载本地题库失败: {e}")
+        return []
+
+
+def load_homework_guidance_bank():
+    """加载作业模式的预生成教学资产。"""
+    if not os.path.exists(HOMEWORK_GUIDANCE_BANK_PATH):
+        return {}
+
+    try:
+        mtime = os.path.getmtime(HOMEWORK_GUIDANCE_BANK_PATH)
+        if HOMEWORK_BANK_CACHE["mtime"] == mtime and HOMEWORK_BANK_CACHE["by_key"]:
+            return HOMEWORK_BANK_CACHE["by_key"]
+
+        with open(HOMEWORK_GUIDANCE_BANK_PATH, "r", encoding="utf-8") as f:
+            items = json.load(f)
+
+        if not isinstance(items, list):
+            items = []
+
+        by_key = {}
+        for item in items:
+            homework_key = item.get("homework_key")
+            problem_index = item.get("problem_index")
+            if homework_key is None or problem_index is None:
+                continue
+            by_key[f"{homework_key}:{problem_index}"] = item
+
+        HOMEWORK_BANK_CACHE["mtime"] = mtime
+        HOMEWORK_BANK_CACHE["items"] = items
+        HOMEWORK_BANK_CACHE["by_key"] = by_key
+        return by_key
+    except Exception as e:
+        print(f"[HomeworkBank] 加载作业资产失败: {e}")
+        return {}
+
+
+def get_homework_guidance_entry(homework_key, problem_index):
+    if homework_key is None or problem_index is None:
+        return None
+    bank = load_homework_guidance_bank()
+    return bank.get(f"{homework_key}:{problem_index}")
+
+
+def choose_local_problem(topics, difficulty, language='C'):
+    """从本地题库中挑选与当前知识点/难度最匹配的题目。"""
+    if language != 'C':
+        return None
+
+    items = load_local_problem_bank()
+    if not items:
+        return None
+
+    requested_topics = set(topics or [])
+    candidates = []
+
+    for item in items:
+        item_topic = item.get('topic')
+        item_difficulty = item.get('difficulty')
+        modules = item.get('modules') or {}
+
+        if requested_topics and item_topic not in requested_topics:
+            continue
+        if difficulty and item_difficulty != difficulty:
+            continue
+        if not item.get('problem'):
+            continue
+
+        candidates.append(item)
+
+    if not candidates and requested_topics:
+        for item in items:
+            if item.get('topic') in requested_topics and item.get('problem'):
+                candidates.append(item)
+
+    if not candidates:
+        return None
+
+    ready_candidates = [item for item in candidates if item.get('standard_answer') and item.get('modules')]
+    pool = ready_candidates or candidates
+    return random.choice(pool)
+
+
+def prime_guidance_outputs_from_problem(session_id, problem_info):
+    """将题目自带模块预热到 Redis，避免重复调用模型。"""
+    modules = problem_info.get('modules') or {}
+    if not modules:
+        return
+
+    for guidance_type in GUIDANCE_DEPENDENCIES.keys():
+        content = modules.get(guidance_type)
+        if content:
+            save_guidance_output(session_id, guidance_type, content)
+            if guidance_type == '框架':
+                leaf_nodes = extract_leaf_nodes_from_framework(content)
+                if leaf_nodes:
+                    redis_client = get_redis_client()
+                    leaf_key = f"xiaohang_framework_leaves:{session_id}"
+                    redis_client.setex(leaf_key, 3600, json.dumps(leaf_nodes, ensure_ascii=False))
+
+
+def get_cached_guidance_content(session_id, guidance_type, problem_info=None):
+    """优先读取 Redis 中的模块缓存，其次读取题目自带模块。"""
+    redis_client = get_redis_client()
+    cached_key = f"xiaohang_guidance_output:{session_id}:{guidance_type}"
+    cached_data = redis_client.get(cached_key)
+    if cached_data:
+        return cached_data.decode('utf-8')
+
+    modules = (problem_info or {}).get('modules') or {}
+    content = modules.get(guidance_type)
+    if content:
+        save_guidance_output(session_id, guidance_type, content)
+        if guidance_type == '框架':
+            leaf_nodes = extract_leaf_nodes_from_framework(content)
+            if leaf_nodes:
+                leaf_key = f"xiaohang_framework_leaves:{session_id}"
+                redis_client.setex(leaf_key, 3600, json.dumps(leaf_nodes, ensure_ascii=False))
+        return content
+
+    return ""
 
 def get_redis_client():
     """获取Redis客户端"""
@@ -286,7 +446,7 @@ def init_session():
     session['xiaohang_topics'] = selected_topics
     session['xiaohang_difficulty'] = '简单'
     session['xiaohang_correct_count'] = 0
-    session['xiaohang_model'] = 'loopcoder'  # 默认使用LoopCoder大模型
+    session['xiaohang_model'] = 'loopcoder400b'  # 默认使用LoopCoder大模型
     session['xiaohang_language'] = 'C'  # 默认使用C语言
     
     return jsonify({
@@ -323,10 +483,30 @@ def generate_problem():
         try:
             # 清理之前的模块输出（新题目需要重新生成所有模块）
             clear_all_guidance_outputs(session_id)
-            
+            language = session.get('xiaohang_language', 'C')
+            local_problem = choose_local_problem(topics, difficulty, language=language)
+
+            if local_problem:
+                problem_info = {
+                    "problem": local_problem.get("problem", ""),
+                    "standard_answer": local_problem.get("standard_answer", ""),
+                    "standard_answer_language": "C",
+                    "difficulty": local_problem.get("difficulty", difficulty),
+                    "topics": topics,
+                    "topic": local_problem.get("topic", ""),
+                    "modules": local_problem.get("modules", {}),
+                    "local_problem_id": local_problem.get("id", ""),
+                    "source": "local_problem_bank",
+                    "timestamp": time.time()
+                }
+                redis_client.setex(problem_key, 3600, json.dumps(problem_info, ensure_ascii=False))
+                prime_guidance_outputs_from_problem(session_id, problem_info)
+
+                yield problem_info["problem"]
+                return
+
             # 构建题目生成提示词（不包含提示部分）
             topics_str = '、'.join(topics)
-            language = session.get('xiaohang_language', 'C')
             lang_name = 'C语言' if language == 'C' else 'Python'
             prompt = f"""你是一名专业的{lang_name}数据结构与算法出题专家。请生成一道{difficulty}难度的编程题。
 
@@ -376,6 +556,8 @@ def generate_problem():
                     "standard_answer": "",  # 先存空，稍后更新
                     "difficulty": difficulty,
                     "topics": topics,
+                    "modules": {},
+                    "source": "llm_generated",
                     "timestamp": time.time()
                 })
             )
@@ -426,6 +608,8 @@ def generate_problem():
                     "standard_answer_language": language,
                     "difficulty": difficulty,
                     "topics": topics,
+                    "modules": {},
+                    "source": "llm_generated",
                     "timestamp": time.time()
                 })
             )
@@ -661,6 +845,12 @@ def get_guidance():
     current_problem = problem_info['problem']
     standard_answer = problem_info.get('standard_answer', '')  # 获取标准答案
     topics = problem_info['topics']
+
+    cached_content = get_cached_guidance_content(session_id, guidance_type, problem_info=problem_info)
+    if cached_content:
+        def cached_response():
+            yield cached_content
+        return Response(stream_with_context(cached_response()), mimetype='text/event-stream')
     
     # 获取前置模块的输出（上下文传递链）
     previous_outputs = get_previous_guidance_outputs(session_id, guidance_type)
@@ -910,6 +1100,17 @@ def pregenerate_all():
     is_homework = problem_info.get('homework_mode', False)
     topics = problem_info['topics']
     language = session.get('xiaohang_language', 'C')
+
+    cached_modules = {}
+    for module_name in modules_to_generate:
+        cached_modules[module_name] = get_cached_guidance_content(session_id, module_name, problem_info=problem_info)
+
+    if all(cached_modules.get(module_name) for module_name in modules_to_generate):
+        def stream_cached_modules():
+            for module_name in modules_to_generate:
+                yield json.dumps({"status": "done", "module": module_name}) + "\n"
+            yield json.dumps({"status": "all_done"}) + "\n"
+        return Response(stream_with_context(stream_cached_modules()), mimetype='text/event-stream')
     
     def generate_all():
         try:
@@ -2102,22 +2303,22 @@ def get_guidance_status():
     redis_client = get_redis_client()
     
     # 检查各模块是否已生成
+    problem_key = f"xiaohang_problem:{session_id}"
+    problem_data = redis_client.get(problem_key)
+    problem_info = json.loads(problem_data.decode('utf-8')) if problem_data else {}
+
     status = {}
     for guidance_type in ['思路', '框架', '伪代码', '核心语句']:
-        key = f"xiaohang_guidance_output:{session_id}:{guidance_type}"
-        data = redis_client.get(key)
+        content = get_cached_guidance_content(session_id, guidance_type, problem_info=problem_info)
         status[guidance_type] = {
-            "generated": data is not None,
+            "generated": bool(content),
             "dependencies": GUIDANCE_DEPENDENCIES.get(guidance_type, []),
             "can_generate": True  # 默认可以生成
         }
-    
+
     # 检查是否有标准答案
-    problem_key = f"xiaohang_problem:{session_id}"
-    problem_data = redis_client.get(problem_key)
     has_standard_answer = False
     if problem_data:
-        problem_info = json.loads(problem_data.decode('utf-8'))
         has_standard_answer = bool(problem_info.get('standard_answer'))
     
     status['has_standard_answer'] = has_standard_answer
@@ -2139,12 +2340,14 @@ def get_pregenerated():
     guidance_type = data.get('type', '')
     
     redis_client = get_redis_client()
-    key = f"xiaohang_guidance_output:{session_id}:{guidance_type}"
-    cached = redis_client.get(key)
+    problem_key = f"xiaohang_problem:{session_id}"
+    problem_data = redis_client.get(problem_key)
+    problem_info = json.loads(problem_data.decode('utf-8')) if problem_data else {}
+    cached_content = get_cached_guidance_content(session_id, guidance_type, problem_info=problem_info)
     
-    if cached:
+    if cached_content:
         def return_cached():
-            yield cached.decode('utf-8')
+            yield cached_content
         return Response(stream_with_context(return_cached()), mimetype='text/event-stream')
     else:
         def not_ready():
@@ -2791,6 +2994,9 @@ def switch_homework_problem():
 
     data = request.get_json()
     problem_text = (data.get('problem_text') or '').strip()
+    homework_key = data.get('homework_key')
+    problem_index = data.get('problem_index')
+    title = data.get('title', '')
     if not problem_text:
         return jsonify({"error": "题目内容不能为空"}), 400
 
@@ -2802,20 +3008,41 @@ def switch_homework_problem():
 
     # 2. 存储新题目（标准答案为空，后续按需生成）
     topics = session.get('xiaohang_topics', [])
+    guidance_entry = get_homework_guidance_entry(homework_key, problem_index)
+    problem_info = {
+        "problem": problem_text,
+        "standard_answer": "",
+        "homework_mode": True,
+        "difficulty": session.get('xiaohang_difficulty', '简单'),
+        "topics": topics,
+        "homework_key": homework_key,
+        "problem_index": problem_index,
+        "title": title,
+        "modules": {},
+        "source": "homework_live",
+        "timestamp": time.time()
+    }
+
+    if guidance_entry:
+        problem_info["standard_answer"] = guidance_entry.get("standard_answer", "")
+        problem_info["modules"] = guidance_entry.get("modules", {})
+        problem_info["source"] = "homework_guidance_bank"
+
     redis_client.setex(
         problem_key,
         3600,
-        json.dumps({
-            "problem": problem_text,
-            "standard_answer": "",
-            "homework_mode": True,
-            "difficulty": session.get('xiaohang_difficulty', '简单'),
-            "topics": topics,
-            "timestamp": time.time()
-        })
+        json.dumps(problem_info, ensure_ascii=False)
     )
 
-    return jsonify({"message": "题目已切换", "problem_text": problem_text})
+    if guidance_entry:
+        prime_guidance_outputs_from_problem(session_id, problem_info)
+
+    return jsonify({
+        "message": "题目已切换",
+        "problem_text": problem_text,
+        "source": problem_info["source"],
+        "has_modules": bool(problem_info.get("modules"))
+    })
 
 
 @xiaohang_enhanced_bp.route('/submit_code_homework', methods=['POST'])

@@ -1,0 +1,8 @@
+{
+  "admin_password": "zgl666",
+  "llm": {
+    "base_url": "",
+    "api_key": "",
+    "model": ""
+  }
+}
