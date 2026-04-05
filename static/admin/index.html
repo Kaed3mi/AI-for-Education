@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>题库管理后台</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: "Segoe UI", sans-serif; background: #f4f7fb; color: #223; }
+        .hidden { display: none !important; }
+        .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .card { background: #fff; border-radius: 16px; box-shadow: 0 12px 40px rgba(20,30,60,.12); }
+        .login-card { width: 360px; padding: 28px; }
+        h1, h2, h3 { margin: 0 0 12px; }
+        input, select, textarea, button {
+            width: 100%; padding: 10px 12px; border: 1px solid #d7dce5; border-radius: 10px; font: inherit;
+        }
+        textarea { min-height: 160px; resize: vertical; }
+        button { cursor: pointer; background: #1d4ed8; color: #fff; border: none; }
+        button.secondary { background: #eef2ff; color: #1e3a8a; }
+        button.warn { background: #d97706; }
+        button.success { background: #15803d; }
+        .row { display: flex; gap: 12px; }
+        .row > * { flex: 1; }
+        .stack { display: flex; flex-direction: column; gap: 12px; }
+        .layout { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
+        .sidebar { padding: 16px; border-right: 1px solid #e4e8ef; background: #fff; overflow: auto; }
+        .main { padding: 16px; overflow: auto; }
+        .topbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .panel { padding: 16px; margin-bottom: 16px; }
+        .list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow: auto; }
+        .list-item {
+            padding: 12px 14px; border-radius: 12px; background: #f8fafc; border: 1px solid #e2e8f0; cursor: pointer;
+        }
+        .list-item.active { border-color: #2563eb; background: #eff6ff; }
+        .list-item-title { font-size: 14px; font-weight: 600; color: #0f172a; line-height: 1.5; }
+        .list-item-subtitle { font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.5; }
+        .list-item-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+        .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e2e8f0; font-size: 12px; margin-left: 6px; }
+        .pill.easy { background: #dcfce7; color: #166534; }
+        .pill.medium { background: #fef3c7; color: #92400e; }
+        .pill.hard { background: #fee2e2; color: #991b1b; }
+        .editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .editor-grid .full { grid-column: 1 / -1; }
+        .muted { color: #667085; font-size: 13px; }
+        .status { min-height: 20px; color: #1d4ed8; font-size: 13px; }
+        .section-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+        .section-tabs button.active { background: #0f172a; }
+        .job-box { background: #0b1220; color: #dbeafe; border-radius: 12px; padding: 12px; font-family: Consolas, monospace; font-size: 12px; min-height: 180px; max-height: 300px; overflow: auto; white-space: pre-wrap; }
+        .job-list { display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow: auto; }
+        .job-item { border: 1px solid #d8dee8; border-radius: 10px; padding: 10px; background: #fff; cursor: pointer; }
+        .job-item.active { border-color: #1d4ed8; background: #eff6ff; }
+        .check-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; background: #fff; }
+        .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal { width: min(1100px, 92vw); max-height: 88vh; overflow: auto; background: #fff; border-radius: 18px; box-shadow: 0 16px 60px rgba(15,23,42,.28); padding: 18px; }
+        .job-meta { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px; font-size:13px; color:#334155; white-space:pre-wrap; }
+    </style>
+</head>
+<body>
+    <div id="login-view" class="login-wrap">
+        <div class="card login-card stack">
+            <div>
+                <h2>/admin</h2>
+                <div class="muted">输入密码进入题库管理后台</div>
+            </div>
+            <input id="login-password" type="password" placeholder="管理员密码">
+            <button id="login-btn">登录</button>
+            <div id="login-status" class="status"></div>
+        </div>
+    </div>
+
+    <div id="admin-view" class="layout hidden">
+        <aside class="sidebar">
+            <div class="stack">
+                <div class="topbar" style="margin-bottom:0;">
+                    <h3>管理后台</h3>
+                    <button id="logout-btn" class="secondary" style="width:auto;">退出</button>
+                </div>
+                <div class="card panel stack">
+                    <h3>模型配置</h3>
+                    <input id="base-url" placeholder="Base URL">
+                    <input id="api-key" placeholder="API Key">
+                    <input id="model-name" placeholder="Model">
+                    <input id="admin-password" placeholder="新密码（可选，不改就保留原值）">
+                    <button id="save-settings-btn" class="success">保存配置</button>
+                    <div id="settings-status" class="status"></div>
+                </div>
+
+                <div class="card panel stack">
+                    <h3>总览</h3>
+                    <div id="summary-box" class="muted">加载中...</div>
+                </div>
+
+                <div id="search-panel" class="card panel stack">
+                    <div class="section-tabs">
+                        <button id="tab-knowledge" class="active">知识点题</button>
+                        <button id="tab-homework" class="secondary">作业题</button>
+                    </div>
+
+                    <div id="knowledge-controls" class="stack">
+                        <select id="knowledge-topic">
+                            <option value="">先选择知识点 Tag</option>
+                        </select>
+                        <select id="knowledge-difficulty">
+                            <option value="">全部难度</option>
+                            <option value="简单">简单</option>
+                            <option value="中等">中等</option>
+                            <option value="困难">困难</option>
+                        </select>
+                        <input id="knowledge-target-count" type="number" min="1" placeholder="目标题数，例如 30">
+                        <div class="row">
+                            <button id="knowledge-refresh-btn" class="secondary">刷新列表</button>
+                            <button id="knowledge-generate-btn" class="warn">生成单题</button>
+                        </div>
+                        <button id="knowledge-batch-btn">批量补生成</button>
+                    </div>
+
+                    <div id="homework-controls" class="stack hidden">
+                        <select id="homework-key"></select>
+                        <div class="row">
+                            <button id="homework-refresh-btn" class="secondary">刷新列表</button>
+                            <button id="homework-batch-btn">批量生成勾选题</button>
+                        </div>
+                    </div>
+
+                    <div id="list-status" class="status"></div>
+                </div>
+
+            </div>
+        </aside>
+
+        <main class="main">
+            <div class="card panel stack">
+                <div class="topbar">
+                    <div>
+                        <h2>题目列表</h2>
+                        <div class="muted">中间区域专注展示当前筛选条件下的题目，点击任意题目弹窗查看详情</div>
+                    </div>
+                    <div class="row" style="width: 280px;">
+                        <button id="save-item-btn" class="success">保存当前弹窗题目</button>
+                        <button id="generate-item-btn" class="warn">重新生成当前弹窗题目</button>
+                    </div>
+                </div>
+                <div id="item-list" class="list"></div>
+            </div>
+
+            <div class="card panel stack">
+                <div>
+                    <h3>实时终端</h3>
+                    <div class="muted">显示当前或选中任务的实时进度回显</div>
+                </div>
+                <div id="editor-status" class="status"></div>
+                <div id="terminal-box" class="job-box">等待任务输出...</div>
+            </div>
+
+            <div class="card panel stack">
+                <div class="topbar" style="margin-bottom:0;">
+                    <div>
+                        <h3>批处理任务</h3>
+                        <div class="muted">当前任务与历史任务记录</div>
+                    </div>
+                </div>
+                <div id="current-job-box" class="muted">当前没有运行中的任务</div>
+                <div id="current-job-meta" class="job-meta">暂无任务详情</div>
+                <div id="job-list" class="job-list"></div>
+            </div>
+        </main>
+    </div>
+
+    <div id="editor-modal-wrap" class="modal-backdrop hidden">
+        <div class="modal stack">
+            <div class="topbar">
+                <div>
+                    <h2 id="editor-title">题目详情</h2>
+                    <div id="modal-editor-meta" class="muted"></div>
+                </div>
+                <button id="close-editor-modal" class="secondary" style="width:auto;">关闭</button>
+            </div>
+            <div class="editor-grid">
+                <div class="full stack">
+                    <label>题面</label>
+                    <textarea id="field-problem"></textarea>
+                </div>
+                <div class="full stack">
+                    <label>标准答案</label>
+                    <textarea id="field-answer"></textarea>
+                </div>
+                <div class="stack">
+                    <label>思路</label>
+                    <textarea id="field-thought"></textarea>
+                </div>
+                <div class="stack">
+                    <label>框架</label>
+                    <textarea id="field-framework"></textarea>
+                </div>
+                <div class="stack">
+                    <label>伪代码</label>
+                    <textarea id="field-pseudocode"></textarea>
+                </div>
+                <div class="stack">
+                    <label>代码补全</label>
+                    <textarea id="field-core"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/admin/admin.js"></script>
+</body>
+</html>

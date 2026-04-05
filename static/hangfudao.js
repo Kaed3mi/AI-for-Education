@@ -462,7 +462,12 @@ async function storeHomeworkProblemToBackend(problem) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ problem_text: problem.description })
+            body: JSON.stringify({
+                problem_text: problem.description,
+                homework_key: currentHomeworkId,
+                problem_index: currentHomeworkProblemIdx,
+                title: problem.title
+            })
         });
         // 作业题目存入后端后，立即启动后台自动预生成链（智能审题 → 代码框架）
         triggerBackgroundChain();
@@ -1389,8 +1394,8 @@ function showContent(type) {
             getCorrectAnswerToFloating();
         }
     } else if (['框架', '伪代码', '核心语句'].includes(type)) {
-        if (type === '框架') {
-            // 框架：使用预生成内容
+        if (type === '框架' || type === '伪代码' || pregeneratedModules.has(type)) {
+            // 框架、伪代码：优先使用预生成内容
             getPregeneratedContent(type);
         } else if (type === '核心语句' && bgCoreCompleted && bgCoreText) {
             // 代码补全：后台已预生成完成，直接加载
@@ -1715,7 +1720,7 @@ async function _renderBgContentToDisplay(type, text, contentEl, panelId) {
     }
 }
 
-// 仅预生成代码框架（智能审题完成后触发）
+// 预生成框架/伪代码/代码补全（智能审题完成后触发）
 async function triggerPregenerateFramework() {
     if (pregenerateStarted) return;
     pregenerateStarted = true;
@@ -1723,16 +1728,18 @@ async function triggerPregenerateFramework() {
     pregeneratingModule = null;
 
     updateModuleButtonStatus('框架', 'loading');
-    console.log('[预生成] 开始预生成代码框架...');
+    updateModuleButtonStatus('伪代码', 'loading');
+    updateModuleButtonStatus('核心语句', 'loading');
+    console.log('[预生成] 开始预生成代码框架/伪代码/代码补全...');
     try {
         const response = await fetch(`${API_PREFIX}/xiaohang/pregenerate_all`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ modules: ['框架'] })
+            body: JSON.stringify({ modules: ['框架', '伪代码', '核心语句'] })
         });
         if (!response.ok) {
-            console.error('代码框架预生成请求失败');
+            console.error('模块预生成请求失败');
             return;
         }
         const reader = response.body.getReader();
@@ -1755,10 +1762,18 @@ async function triggerPregenerateFramework() {
                         pregeneratedModules.add(msg.module);
                         pregeneratingModule = null;
                         console.log(`[预生成] 完成: ${msg.module}`);
-                        if (msg.module === '框架') updateModuleButtonStatus('框架', 'ready');
+                        if (msg.module === '框架') {
+                            updateModuleButtonStatus('框架', 'ready');
+                            frameworkGenerated = true;
+                        } else if (msg.module === '伪代码') {
+                            updateModuleButtonStatus('伪代码', 'ready');
+                        } else if (msg.module === '核心语句') {
+                            updateModuleButtonStatus('核心语句', 'ready');
+                            bgCoreCompleted = true;
+                        }
                         refreshWaitingPanel(msg.module);
                     } else if (msg.status === 'all_done') {
-                        console.log('[预生成] 代码框架预生成完成');
+                        console.log('[预生成] 模块预生成完成');
                     } else if (msg.status === 'error') {
                         console.error('[预生成] 错误:', msg.message);
                     }
@@ -1766,8 +1781,10 @@ async function triggerPregenerateFramework() {
             }
         }
     } catch (error) {
-        console.error('代码框架预生成出错:', error);
+        console.error('模块预生成出错:', error);
         updateModuleButtonStatus('框架', 'default');
+        updateModuleButtonStatus('伪代码', 'default');
+        updateModuleButtonStatus('核心语句', 'default');
     }
 }
 

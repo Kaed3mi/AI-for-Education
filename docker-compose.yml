@@ -38,6 +38,7 @@ services:
       - ./TeachingAgent:/app/TeachingAgent:ro
       - ./generator_kit:/app/generator_kit:ro
       - ./xiaohang_integration:/app/xiaohang_integration:ro
+      - ../app_pregenerator:/app_pregenerator:ro
     depends_on:
       - redis
       - mysql

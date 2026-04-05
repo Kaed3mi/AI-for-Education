@@ -1,165 +1,124 @@
-# 项目运行说明
+# AI-for-Education
 
-## 方式一：使用 Docker 运行（推荐）
+一个可独立运行的教学辅导系统目录。当前目录已经收拢了知识点题库生成、作业题预生成、学生端辅导与 `/admin` 管理后台所需的主要资产，不再默认依赖外层仓库目录结构。
 
-### 前置要求
-1. 安装并启动 **Docker Desktop**
-2. 确保 Docker 正在运行（托盘图标不再转动）
+## 推荐启动方式
 
-### 运行步骤
+### 本地启动
 
-1. **配置环境变量**
-   - 复制 `.env.example` 文件为 `.env`
-   - 编辑 `.env` 文件，填入你的 API 密钥：
-     ```env
-     XIAOHANG_API_KEY=你的小航API密钥
-     OLLAMA_BEARER_TOKEN=你的Ollama令牌（可选）
-     JDOODLE_CLIENT_ID=你的JDoodle客户端ID（可选）
-     JDOODLE_CLIENT_SECRET=你的JDoodle客户端密钥（可选）
-     ```
+1. 准备本地依赖
+   - Python 3.10+
+   - Redis
+   - MySQL（默认端口 `3307`）
 
-2. **启动服务**
-   - 在 PowerShell 中运行：
-     ```powershell
-     .\start.ps1
-     ```
-   - 脚本会自动：
-     - 检查 Docker 状态
-     - 创建数据目录
-     - 构建并启动容器
-     - 启动 Flask 应用和 Redis
+2. 配置环境变量
+   - 编辑当前目录下的 `.env`
+   - 至少配置模型相关参数与数据库连接信息
 
-3. **访问应用**
-   - 启动成功后，访问：http://localhost:5000
-   - 脚本会自动在浏览器中打开
-
-### 常用命令
-
-- **查看日志**：
-  ```powershell
-  docker-compose logs -f
-  ```
-
-- **停止服务**：
-  ```powershell
-  .\stop.ps1
-  # 或
-  docker-compose stop
-  ```
-
-- **重启服务**：
-  ```powershell
-  docker-compose restart
-  ```
-
-- **完全清理（删除容器和数据）**：
-  ```powershell
-  docker-compose down -v
-  ```
-
----
-
-## 方式二：直接运行 Python（开发模式）
-
-### 前置要求
-1. Python 3.10 或更高版本
-2. Redis 服务器（需要单独安装并运行）
-
-### 运行步骤
-
-1. **安装 Redis**
-   - Windows: 下载并安装 Redis for Windows，或使用 WSL
-   - 启动 Redis 服务（默认端口 6379）
-
-2. **安装 Python 依赖**
+3. 启动应用
    ```powershell
-   pip install -r requirements.txt
+   .\start_local.ps1
    ```
-   
-   注意：如果 `requirements.txt` 中包含本地路径依赖，可能需要手动安装核心依赖：
+   或
    ```powershell
-   pip install flask flask-cors flask-session redis requests langchain python-dotenv
+   .\.venv\Scripts\python.exe .\app.py
    ```
 
-3. **配置环境变量**
-   - 创建 `.env` 文件（参考 `.env.example`）
-   - 填入必要的 API 密钥
+4. 访问地址
+   - 学生端: [http://localhost:5000](http://localhost:5000)
+   - 管理后台: [http://localhost:5000/admin](http://localhost:5000/admin)
 
-4. **运行应用**
-   ```powershell
-   python app.py
-   ```
+### Docker 启动
 
-5. **访问应用**
-   - 打开浏览器访问：http://localhost:5000
+仍然保留 Docker 方式，但当前更推荐本地模式调试。
 
----
+```powershell
+.\start.ps1
+```
 
-## 环境变量说明
+## 目录结构
 
-### 必需的环境变量
-- `XIAOHANG_API_KEY`: 小航API密钥（必需）
+### 核心应用
+- `app.py`: Flask 主入口
+- `app_xiaohang_enhanced.py`: 学生端增强辅导逻辑
+- `config.py`: LLM 配置与提示词
+- `models.py`: 数据模型
 
-### 可选的环境变量
-- `XIAOHANG_API_URL`: 小航API地址（默认已配置）
-- `OLLAMA_API_URL`: Ollama API地址（用于智能助教功能）
-- `OLLAMA_BEARER_TOKEN`: Ollama认证令牌
-- `JDOODLE_CLIENT_ID`: JDoodle客户端ID（用于代码执行）
-- `JDOODLE_CLIENT_SECRET`: JDoodle客户端密钥
-- `REDIS_HOST`: Redis主机地址（默认：localhost）
-- `REDIS_PORT`: Redis端口（默认：6379）
-- `REDIS_DB`: Redis数据库编号（默认：0）
+### 预生成资产
+- `app_pregenerator/problem_bank.json`: 知识点题本地题库
+- `app_pregenerator/batch_generator.py`: 知识点题生成流水线
+- `app_pregenerator/homework_pregenerator.py`: 作业题预生成脚本
+- `app_pregenerator/homework_guidance_bank.json`: 作业题预生成资产
 
----
+### 题库检索
+- `retriever.py`: 英文题库检索器
+- `leetcode_db.json`: 英文种子题库
 
-## 故障排查
+### 管理后台
+- `admin/admin_panel.py`: `/admin` 后端接口
+- `admin/admin_settings.json`: 后台模型配置与密码
+- `admin/admin_batch_jobs.json`: 批处理任务历史
+- `static/admin/index.html`: 管理后台页面
+- `static/admin/admin.js`: 管理后台前端逻辑
 
-### Docker 相关问题
-1. **Docker 未运行**
-   - 启动 Docker Desktop
-   - 等待完全启动后再运行脚本
+## 管理后台说明
 
-2. **端口被占用**
-   - 检查 5000 端口是否被占用
-   - 修改 `docker-compose.yml` 中的端口映射
+`/admin` 支持：
 
-3. **构建失败**
-   - 检查网络连接
-   - 查看详细错误：`docker-compose logs`
+- 配置模型 `base_url / api_key / model`
+- 管理知识点题库
+- 管理作业题库
+- 单题生成
+- 知识点批量补生成
+- 作业题批量生成
+- 查看批处理历史和实时终端日志
 
-### API 相关问题
-1. **API 密钥错误**
-   - 检查 `.env` 文件中的密钥是否正确
-   - 确认 API 密钥是否有效
+默认管理员密码：
 
-2. **API 连接超时**
-   - 检查网络连接
-   - 确认 API 服务是否可用
+```text
+zgl666
+```
 
-### Redis 相关问题
-1. **Redis 连接失败**
-   - Docker 方式：检查 Redis 容器是否正常运行
-   - 直接运行：确认 Redis 服务已启动
+可以在 `/admin` 中修改，或通过环境变量 `ADMIN_PASSWORD` 覆盖默认值。
 
----
+## 预生成脚本
 
-## 项目结构
+### 生成一整套作业题教学资产
 
-- `app.py`: Flask 主应用文件
-- `config.py`: 配置文件（LLM 配置、提示词等）
-- `app_xiaohang_enhanced.py`: 小航增强版模块
-- `static/`: 前端静态文件
-- `docker-compose.yml`: Docker Compose 配置
-- `Dockerfile`: Docker 镜像构建文件
-- `start.ps1`: Windows PowerShell 启动脚本
-- `stop.ps1`: Windows PowerShell 停止脚本
+```powershell
+.\.venv\Scripts\python.exe .\app_pregenerator\homework_pregenerator.py --homework-key homework0 --model gpt-5.4 --overwrite
+```
 
----
+### 只生成某一道作业题
 
-## 技术支持
+```powershell
+.\.venv\Scripts\python.exe .\app_pregenerator\homework_pregenerator.py --homework-key homework0 --problem-index 0 --model gpt-5.4 --overwrite
+```
 
-如遇到问题，请检查：
-1. Docker 日志：`docker-compose logs`
-2. 应用日志：查看控制台输出
-3. 环境变量配置：确认 `.env` 文件正确
+### 知识点题批量生成
+
+推荐直接通过 `/admin` 操作；后台已经接到 `app_pregenerator/batch_generator.py` 的流水线。
+
+## 环境变量
+
+常用变量：
+
+- `REDIS_HOST`
+- `REDIS_PORT`
+- `REDIS_DB`
+- `MYSQL_HOST`
+- `MYSQL_PORT`
+- `MYSQL_USER`
+- `MYSQL_PASSWORD`
+- `MYSQL_DATABASE`
+- `AKR_BASE_URL`
+- `AKR_API_KEY`
+- `ADMIN_MODEL`
+- `ADMIN_PASSWORD`
+
+## 说明
+
+- 当前目录内部已经包含知识点题库生成所需的 `problem_bank.json / batch_generator.py / retriever.py / leetcode_db.json`
+- 当前目录内部也已经包含作业题预生成所需的脚本与资产
+- 仍然可能存在 `.idea`、`.venv`、`__pycache__` 这类开发环境文件，其中的绝对路径不影响运行时逻辑
 
