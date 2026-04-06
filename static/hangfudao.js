@@ -15,6 +15,7 @@ const KNOWLEDGE_POINTS = [
 let homeworkMode = false;       // 是否处于作业模式
 let currentHomeworkId = '';      // 当前作业ID，如 'homework0'
 let currentHomeworkProblemIdx = 0; // 当前题目索引
+let homeworkHasPregenModules = false; // 当前作业题是否有预生成的教学资产
 let currentCategory = 'homework0'; // 当前选择页分类
 
 // 作业数据从 homework_data.js 中加载（HOMEWORK_DATA 全局变量）
@@ -298,7 +299,7 @@ async function selectHomeworkProblem(homeworkId, problemIdx, btn) {
         const data = await response.json();
         if (response.ok) {
             sessionId = data.session_id;
-            enterHomeworkPracticePage(problem);
+            await enterHomeworkPracticePage(problem);
         } else {
             alert(data.error || '初始化失败');
         }
@@ -309,7 +310,7 @@ async function selectHomeworkProblem(homeworkId, problemIdx, btn) {
 }
 
 // 进入作业练习页面
-function enterHomeworkPracticePage(problem) {
+async function enterHomeworkPracticePage(problem) {
     document.body.classList.add('practice-mode');
     document.getElementById('selection-page').classList.add('hidden');
     document.getElementById('practice-page').classList.add('active');
@@ -326,8 +327,8 @@ function enterHomeworkPracticePage(problem) {
     // 显示当前题目
     showHomeworkProblem(problem);
     
-    // 将题目存入Redis（通过set_custom_problem接口）
-    storeHomeworkProblemToBackend(problem);
+    // 将题目存入Redis，等待完成以确定是否有预生成内容
+    await storeHomeworkProblemToBackend(problem);
 }
 
 // 设置作业模式的题目选择器（替换难度选择器）
@@ -410,6 +411,7 @@ async function switchHomeworkProblem(newIdx) {
     pregeneratingModule = null;
     analysisGenerated = false;
     frameworkGenerated = false;
+    homeworkHasPregenModules = false;
     resetBackgroundCache();
     
     // 7. 清理 Mermaid 残留
@@ -458,7 +460,7 @@ function showHomeworkProblem(problem) {
 // 将作业题目存入后端Redis（轻量级，不生成标准答案，立即返回）
 async function storeHomeworkProblemToBackend(problem) {
     try {
-        await fetch(`${API_PREFIX}/xiaohang/switch_homework_problem`, {
+        const response = await fetch(`${API_PREFIX}/xiaohang/switch_homework_problem`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -469,8 +471,34 @@ async function storeHomeworkProblemToBackend(problem) {
                 title: problem.title
             })
         });
-        // 作业题目存入后端后，立即启动后台自动预生成链（智能审题 → 代码框架）
-        triggerBackgroundChain();
+        const result = await response.json();
+        console.log('[作业模式-调试] switch_homework_problem 响应:', JSON.stringify(result));
+        console.log('[作业模式-调试] response.ok:', response.ok, 'status:', response.status);
+        console.log('[作业模式-调试] has_modules:', result && result.has_modules);
+        homeworkHasPregenModules = !!(result && result.has_modules);
+
+        if (homeworkHasPregenModules) {
+            // 有预生成教学资产，直接标记所有前置条件和后台生成状态为已完成
+            // 防止任何代码路径触发LoopCoder API调用
+            analysisGenerated = true;
+            frameworkGenerated = true;
+            bgAnalysisStarted = true;
+            bgAnalysisCompleted = true;
+            bgAnalysisText = '[pregenerated]';
+            bgCoreStarted = true;
+            bgCoreCompleted = true;
+            bgCoreText = '[pregenerated]';
+            pregenerateStarted = true;
+            pregeneratedModules.add('框架');
+            pregeneratedModules.add('伪代码');
+            pregeneratedModules.add('核心语句');
+            // 更新按钮状态为已就绪（绿色徽标）
+            ['思路', '框架', '伪代码', '核心语句'].forEach(t => updateModuleButtonStatus(t, 'ready'));
+            console.log('[作业模式] 检测到预生成教学资产，四大模块可直接使用，所有后台AI链已禁止');
+        } else {
+            // 无预生成内容，走原有后台自动预生成链（智能审题 → 代码框架）
+            triggerBackgroundChain();
+        }
     } catch (e) {
         console.error('存储作业题目失败:', e);
     }
@@ -1365,6 +1393,20 @@ function showContent(type) {
     // 记录该模块类型对应的面板ID
     panelIdByType.set(config.title, currentPanelId);
     
+    // 作业模式：有预生成教学资产时，四大模块直接从后端加载，无需AI生成
+    if (homeworkMode && homeworkHasPregenModules && ['思路', '框架', '伪代码', '核心语句'].includes(type)) {
+        console.log(`[作业模式] 直接加载预生成内容: ${type}, homeworkMode=${homeworkMode}, flag=${homeworkHasPregenModules}`);
+        // 初始化面板缓冲区
+        panelStreamBuffers.set(currentPanelId, { fullText: '', type: type, completed: false, waiting: false });
+        currentGuidanceType = type;
+        loadPregeneratedToPanel(type, currentPanelId);
+        // 显示悬浮小人
+        if (AVATAR_FOLLOWUP_MODULES.includes(type) && typeof showFloatingAvatar === 'function') {
+            showFloatingAvatar(type);
+        }
+        return;
+    }
+    
     if (type === '思路') {
         if (bgAnalysisCompleted && bgAnalysisText) {
             // 后台已预生成完成，直接加载内容
@@ -1517,6 +1559,11 @@ function resetAllModuleButtonStatuses() {
 // 知识点模式：正确答案 & 智能审题 同时并行启动 → 代码框架
 // 作业模式：智能审题 → 代码框架
 function triggerBackgroundChain() {
+    // 作业模式有预生成教学资产时，跳过所有后台AI生成
+    if (homeworkMode && homeworkHasPregenModules) {
+        console.log('[后台预生成] 已有预生成教学资产，跳过后台AI链');
+        return;
+    }
     if (homeworkMode) {
         bgGenerateAnalysis();
     } else {
@@ -1882,7 +1929,9 @@ async function loadPregeneratedToPanel(type, targetPanelId) {
         // 渲染内容
         const finalDisplay = getTargetDisplay();
         if (finalDisplay && currentPanelId === targetPanelId) {
-            if (type === '框架') {
+            if (type === '思路') {
+                await renderAnalysisContent(fullText, finalDisplay);
+            } else if (type === '框架') {
                 await renderFrameworkToFloating(fullText, finalDisplay);
             } else if (type === '伪代码') {
                 await renderCodeAnalysisContent(fullText, finalDisplay);

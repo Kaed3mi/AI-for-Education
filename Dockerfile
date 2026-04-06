@@ -35,11 +35,13 @@ RUN echo "deb https://mirrors.aliyun.com/debian/ trixie main" > /etc/apt/sources
 RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com -r requirements-docker.txt
 
 # 复制应用代码
-COPY app.py config.py config_programming_assistant.py app_xiaohang.py app_xiaohang_enhanced.py app_teaching.py models.py ./
+COPY app.py config.py config_programming_assistant.py app_xiaohang.py app_xiaohang_enhanced.py app_teaching.py models.py retriever.py ./
 COPY static/ ./static/
 COPY TeachingAgent/ ./TeachingAgent/
 COPY generator_kit/ ./generator_kit/
 COPY xiaohang_integration/ ./xiaohang_integration/
+COPY admin/ ./admin/
+COPY app_pregenerator/ ./app_pregenerator/
 
 # 创建非 root 用户
 RUN useradd --create-home --shell /bin/bash app && \
