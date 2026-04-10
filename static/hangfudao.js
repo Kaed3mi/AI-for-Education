@@ -10,6 +10,16 @@ const KNOWLEDGE_POINTS = [
     '排序', '查找', '动态规划', '贪心', '回溯', '递归'
 ];
 
+const WEEKLY_KNOWLEDGE_GROUPS = [
+    { week: '第1-5周', topics: ['数组', '链表', '查找'] },
+    { week: '第6周', topics: ['栈'] },
+    { week: '第7周', topics: ['队列', '优先队列', '堆'] },
+    { week: '第8-10周', topics: ['树', '二叉树', '二叉搜索树', 'AVL', '堆'] },
+    { week: '第11-13周', topics: ['图', 'DFS', 'BFS', '最小生成树', '最短路'] },
+    { week: '第14周', topics: ['查找', 'B树', '哈希表', '散列表'] },
+    { week: '第15-16周', topics: ['排序', '堆'] }
+];
+
 // ==================== 作业模式数据 ====================
 // 作业模式标记
 let homeworkMode = false;       // 是否处于作业模式
@@ -238,16 +248,47 @@ function initKnowledgeGrid() {
         return doc.body.firstChild;
     }
 
+    function renderWeekSection(group, isOpen = false) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'week-group';
+
+        const header = document.createElement('button');
+        header.className = 'week-group-header';
+        header.type = 'button';
+        header.innerHTML = `
+            <div class="week-group-title">${group.week}</div>
+            <div class="week-group-subtitle">推荐知识点：${group.topics.join('、')}</div>
+            <div class="week-group-toggle">${isOpen ? '−' : '+'}</div>
+        `;
+
+        const body = document.createElement('div');
+        body.className = 'week-group-body' + (isOpen ? ' open' : '');
+
+        group.topics.forEach(topic => {
+            const btn = renderItem(topic, 512);
+            btn.className = 'knowledge-grid-button knowledge-choice-btn';
+            btn.onclick = () => selectKnowledge(topic, btn);
+            body.appendChild(btn);
+        });
+
+        header.onclick = () => {
+            const open = body.classList.toggle('open');
+            const toggle = header.querySelector('.week-group-toggle');
+            if (toggle) toggle.textContent = open ? '−' : '+';
+        };
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(body);
+        return wrapper;
+    }
+
     const grid = document.getElementById('knowledge-grid');
     grid.innerHTML = '';
 
     if (currentCategory === 'knowledge') {
-        // 知识点模式
-        KNOWLEDGE_POINTS.forEach(point => {
-            const btn = renderItem(point, 512);
-            btn.className = 'knowledge-grid-button';
-            btn.onclick = () => selectKnowledge(point, btn);
-            grid.appendChild(btn);
+        // 知识点模式：按教学周分组展示推荐知识点
+        WEEKLY_KNOWLEDGE_GROUPS.forEach((group, index) => {
+            grid.appendChild(renderWeekSection(group, index === 0));
         });
     } else if (currentCategory.startsWith('homework')) {
         // 作业模式 - 显示题目列表
@@ -255,7 +296,7 @@ function initKnowledgeGrid() {
         if (hwData) {
             hwData.problems.forEach((prob, idx) => {
                 const btn = renderItem(prob.title, 512);
-                btn.className = 'knowledge-grid-button';
+                btn.className = 'knowledge-grid-button knowledge-choice-btn';
                 btn.onclick = () => selectHomeworkProblem(currentCategory, idx, btn);
                 grid.appendChild(btn);
             });
@@ -1003,7 +1044,7 @@ function aggressiveMermaidSanitize(code) {
 
 async function selectKnowledge(point, btn) {
     // 取消之前的选择
-    document.querySelectorAll('.knowledge-btn').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.knowledge-choice-btn').forEach(b => b.classList.remove('selected'));
     
     // 选中当前
     btn.classList.add('selected');

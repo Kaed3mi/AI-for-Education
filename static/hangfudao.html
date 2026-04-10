@@ -90,10 +90,72 @@
 
 
         .knowledge-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 20px 48px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
             padding: 0px 20px;
+        }
+
+        .week-group {
+            border: 1px solid #E8EAED;
+            border-radius: 18px;
+            background: #FBFCFD;
+            overflow: hidden;
+        }
+
+        .week-group-header {
+            width: 100%;
+            border: none;
+            background: transparent;
+            padding: 16px 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .week-group-header:hover {
+            background: #F3F8FF;
+        }
+
+        .week-group-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #222;
+            min-width: 88px;
+        }
+
+        .week-group-subtitle {
+            flex: 1;
+            font-size: 14px;
+            color: #667085;
+            line-height: 1.6;
+        }
+
+        .week-group-toggle {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #E8F1FF;
+            color: #2563EB;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .week-group-body {
+            display: none;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px 24px;
+            padding: 0 18px 18px 18px;
+        }
+
+        .week-group-body.open {
+            display: grid;
         }
 
         .knowledge-btn {
@@ -133,6 +195,12 @@
             border-color: #85C5FF;
             color: #fff;
 
+        }
+
+        .knowledge-choice-btn.selected {
+            border-color: #85C5FF !important;
+            background: #E8F1FF !important;
+            box-shadow: 0 0 0 2px rgba(133, 197, 255, 0.35);
         }
 
         /* 编程练习页面 */

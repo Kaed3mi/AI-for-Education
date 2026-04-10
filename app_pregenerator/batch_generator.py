@@ -13,16 +13,22 @@ sys.path.append(project_root)
 try:
     from retriever import LeetCodeRetriever
 except ImportError:
-    print("Warning: Failed to import LeetCodeRetriever. Make sure leetcode_db.json and retriever.py are root.")
-    class LeetCodeRetriever:
-        def retrieve(self, tag=None, difficulty=None): return None
+    try:
+        from ..retriever import LeetCodeRetriever
+    except Exception:
+        print("Warning: Failed to import LeetCodeRetriever. Make sure leetcode_db.json and retriever.py are available.")
+        class LeetCodeRetriever:
+            def retrieve(self, tag=None, difficulty=None): return None
 
 # Import prompts from current AI-for-Education project
 try:
     from config import get_system_prompts
 except ImportError:
-    print("Failed to import config from current AI-for-Education project. Verify paths.")
-    sys.exit(1)
+    try:
+        from ..config import get_system_prompts
+    except Exception:
+        print("Failed to import config from current AI-for-Education project. Verify paths.")
+        sys.exit(1)
 
 DEFAULT_API_KEY = "sk-AKR-api-ah23fua9f8w392noifa"
 DEFAULT_BASE_URL = "https://api-akr.top/v1/"
